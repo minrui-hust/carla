@@ -182,10 +182,10 @@ pipeline
                                         make CarlaUE4Editor
                                     """
                                 }
-                                bat """
-                                    call ../setEnv64.bat
-                                    make examples
-                                """
+                                // bat """
+                                //     call ../setEnv64.bat
+                                //     make examples
+                                // """
                             }
                             post
                             {
@@ -220,9 +220,9 @@ pipeline
                                 bat """
                                     call ../setEnv64.bat
                                     make package
-                                    rem make package ARGS="--packages=AdditionalMaps --clean-intermediate"
-                                    rem make examples ARGS="localhost 3654"
+                                    make package ARGS="--packages=AdditionalMaps --clean-intermediate"
                                 """
+                                    // make examples ARGS="localhost 3654"
                             }
                             post {
                                 always {
@@ -237,11 +237,17 @@ pipeline
                         //     agent { label 'windows && build' }
                         //     steps { bat 'rem Not Implemented'}
                         // }
-                        // stage('windows deploy')
-                        // {
-                        //     agent { label 'windows && build' }
-                        //     steps { bat 'rem Not Implemented'}
-                        // }
+                        stage('windows deploy')
+                        {
+                            agent { label 'windows && build' }
+                            when { anyOf { branch "master"; buildingTag() } }
+                            steps {
+                                bat """
+                                    call ../setEnv64.bat
+                                    make deploy ARGS="--replace-latest"
+                                """
+                            }
+                        }
                     }
                 }
             }

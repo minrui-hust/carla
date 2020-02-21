@@ -46,12 +46,10 @@ if not "%1"=="" (
 
     if "%1"=="--ue-version" (
         set UE_VERSION=%~2
-        shift
     )
 
     if "%1"=="--packages" (
         set PACKAGES=%~2
-        shift
     )
 
     if "%1"=="-h" (

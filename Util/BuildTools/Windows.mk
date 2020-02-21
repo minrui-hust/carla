@@ -66,3 +66,6 @@ LibCarla: setup
 
 setup:
 	@"${CARLA_BUILD_TOOLS_FOLDER}/Setup.bat" --boost-toolset msvc-14.1
+
+deploy:
+	@"${CARLA_BUILD_TOOLS_FOLDER}/Deploy.bat" $(ARGS)
