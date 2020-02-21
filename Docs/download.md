@@ -6,7 +6,7 @@
 > branch. It contains the very last fixes and features that will be part of the
 > next release, but also some experimental changes. Use at your own risk!
 
-- [CARLA Nightly Build](http://carla-assets-internal.s3.amazonaws.com/Releases/Linux/Dev/CARLA_Latest.tar.gz)
+- [CARLA Nightly Build](http://carla-releases.s3.amazonaws.com/Linux/Dev/CARLA_Latest.tar.gz)
 
 ### Development [[Documentation](https://carla.readthedocs.io/en/latest/)]
 
