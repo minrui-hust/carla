@@ -55,7 +55,7 @@ while true; do
     --xml )
       XML_OUTPUT=true;
       # Create the folder for the test-results
-      mkdir -p ${CARLA_TEST_RESULTS_FOLDER}
+      mkdir -p "${CARLA_TEST_RESULTS_FOLDER}"
       shift ;;
     --gtest_args )
       GTEST_ARGS="$2";
