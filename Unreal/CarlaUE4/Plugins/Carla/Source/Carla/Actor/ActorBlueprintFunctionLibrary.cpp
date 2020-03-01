@@ -825,9 +825,14 @@ void UActorBlueprintFunctionLibrary::MakeLidarDefinition(
   LowerFOV.Id = TEXT("lower_fov");
   LowerFOV.Type = EActorAttributeType::Float;
   LowerFOV.RecommendedValues = { TEXT("-30.0") };
+  // VerticleAngles.
+  FActorVariation VerticleAngles;
+  VerticleAngles.Id = TEXT("verticle_angles");
+  VerticleAngles.Type = EActorAttributeType::String; // It's an array, repersented by comma seperated string at this point
+  VerticleAngles.RecommendedValues ={TEXT("")};
 
   Definition.Variations.Append(
-      {Channels, Range, PointsPerSecond, Frequency, UpperFOV, LowerFOV});
+      {Channels, Range, PointsPerSecond, Frequency, UpperFOV, LowerFOV, VerticleAngles});
 
   Success = CheckActorDefinition(Definition);
 }
@@ -1291,6 +1296,18 @@ FColor UActorBlueprintFunctionLibrary::RetrieveActorAttributeToColor(
          Default;
 }
 
+TArray<float> RetrieveActorAttributeToFloatArray(
+    const FString &Id,
+    const TMap<FString, FActorAttribute> &Attributes,
+    const TArray<float> &Default)
+{
+  if (!Attributes.Contains(Id)) return Default;
+
+  auto value = Attributes[Id].Value;
+
+}
+
+
 /// ============================================================================
 /// -- Helpers to set Actors ---------------------------------------------------
 /// ============================================================================
@@ -1432,6 +1449,8 @@ void UActorBlueprintFunctionLibrary::SetLidar(
       RetrieveActorAttributeToFloat("upper_fov", Description.Variations, Lidar.UpperFovLimit);
   Lidar.LowerFovLimit =
       RetrieveActorAttributeToFloat("lower_fov", Description.Variations, Lidar.LowerFovLimit);
+  Lidar.VerticleAngles =
+      RetrieveActorAttributeToFloatArray("verticle_angles", Description.Variations, TArray<float>{});
 }
 
 void UActorBlueprintFunctionLibrary::SetGnss(

@@ -202,6 +202,12 @@ public:
       const TMap<FString, FActorAttribute> &Attributes,
       const FColor &Default);
 
+  UFUNCTION(Category = "Carla Actor", BlueprintCallable)
+  static TArray<float> RetrieveActorAttributeToFloatArray(
+      const FString &Id,
+      const TMap<FString, FActorAttribute> &Attributes,
+      const TArray<float> &Default);
+
   /// @}
   /// ==========================================================================
   /// @name Helpers to set Actors
