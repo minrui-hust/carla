@@ -1303,8 +1303,19 @@ TArray<float> RetrieveActorAttributeToFloatArray(
 {
   if (!Attributes.Contains(Id)) return Default;
 
-  auto value = Attributes[Id].Value;
+  auto float_array_string = Attributes[Id].Value;
 
+  TArray<float> float_array;
+  FString left, right;
+  while(float_array_string.Split(TEXT(","), &left, &right)){
+    float_array_string = right;
+    float_array.Emplace(FCString::Atof(*left));
+  }
+  float_array.Emplace(FCString::Atof(*right));
+
+  if(float_array.Num()==0) return Default;
+
+  return float_array;
 }
 
 
@@ -1436,11 +1447,10 @@ void UActorBlueprintFunctionLibrary::SetLidar(
     const FActorDescription &Description,
     FLidarDescription &Lidar)
 {
-  constexpr float TO_CENTIMETERS = 1e2;
   Lidar.Channels =
       RetrieveActorAttributeToInt("channels", Description.Variations, Lidar.Channels);
   Lidar.Range =
-      RetrieveActorAttributeToFloat("range", Description.Variations, 10.0f) * TO_CENTIMETERS;
+      RetrieveActorAttributeToFloat("range", Description.Variations, 10.0f);
   Lidar.PointsPerSecond =
       RetrieveActorAttributeToInt("points_per_second", Description.Variations, Lidar.PointsPerSecond);
   Lidar.RotationFrequency =

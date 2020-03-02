@@ -43,6 +43,7 @@ void EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 }
 
+// Implemention of the RenderTargetPool
 FRenderTargetPool::FRenderTargetPtr FRenderTargetPool::Get()
 {
   FRenderTargetPtr got = nullptr;
