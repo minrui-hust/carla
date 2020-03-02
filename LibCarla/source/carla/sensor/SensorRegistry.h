@@ -33,6 +33,7 @@ class ALaneInvasionSensor;
 class AObstacleDetectionSensor;
 class ARadar;
 class ARayCastLidar;
+class ADepthLidar;
 class ASceneCaptureCamera;
 class ASemanticSegmentationCamera;
 class ARssSensor;
@@ -57,6 +58,7 @@ namespace sensor {
     std::pair<AObstacleDetectionSensor *, s11n::ObstacleDetectionEventSerializer>,
     std::pair<ARadar *, s11n::RadarSerializer>,
     std::pair<ARayCastLidar *, s11n::LidarSerializer>,
+    std::pair<ADepthLidar *, s11n::LidarSerializer>,
     std::pair<ASceneCaptureCamera *, s11n::ImageSerializer>,
     std::pair<ASemanticSegmentationCamera *, s11n::ImageSerializer>,
     std::pair<FWorldObserver *, s11n::EpisodeStateSerializer>

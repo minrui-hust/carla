@@ -18,6 +18,8 @@ class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
 class FRenderTargetPool;
 
+using  FRenderTargetPtr = TSharedPtr<UTextureRenderTarget2D>;
+
 /**
  * 
  */
@@ -41,6 +43,8 @@ class CARLA_API ADepthLidar : public ASensor
 
   virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+  void HandleCaptureOnRenderingThread(FRenderTargetPtr Target, FAsyncDataStream& Stream, FRHICommandListImmediate &InRHICmdList) const;
+
   private:
   void CalcResolutionAndCaptureFov();
 
@@ -48,30 +52,30 @@ class CARLA_API ADepthLidar : public ASensor
 
   void CalcTextureSize();
 
-  void HandleCaptureOnRenderingThread(SharedPtr<UTextureRenderTarget2D> Target, FAsyncDataStream Stream, FRHICommandListImmediate &InRHICmdList);
+  // This function called on rendering thread, pass arguments by value.
+  // Make this function const, so that it would not change the state of itself.  RenderTargetPool is an exception
 
   UPROPERTY(EditAnywhere)
   FLidarDescription Description;
 
   // Store the horizon fov of the capture in rad
   // Fix it at 18 degree at this point
-  constexpr float HFov = carla::geom::Math::ToRadians(18.0f);
+  const float HFov = carla::geom::Math::ToRadians(18.0f);
 
   // Store the vertical fov of the capture in rad
   float VFov;
 
-  // horizon angular resolution in rad
+  // Horizon angular resolution in rad
   float HReso;
 
-  // verticle angular resolution in rad
+  // Verticle angular resolution in rad
   float VReso;
 
-  // verticle elevation angle of laser ray
+  // Verticle elevation angle of laser ray
   TArray<float> Elevations;
 
   // Texture Size in pixels
-  int TextureWidth;
-  int TextureHeight;
+	FIntPoint TextureSize;
   
   // Orientation of the lidar
   float CurrentOrientation = 0.0f;
@@ -84,24 +88,22 @@ class CARLA_API ADepthLidar : public ASensor
   USceneCaptureComponent2D *CaptureComponent2D = nullptr;
 
   // Rendering target pool for CaptureComponent to output
-  TUniquePtr<FRenderTargetPool> RenderTargetPool = nullptr;
+  // Declare it to be mutable, so can be changed even in const member function
+  mutable TUniquePtr<FRenderTargetPool> RenderTargetPool = nullptr;
 };
 
 /**
  * Manage a pool of avialable TextureRenderTarget
  */
 class FRenderTargetPool{
-  using  FRenderTargetPtr = TSharedPtr<UTextureRenderTarget2D>;
-
   public:
   FRenderTargetPtr Get();
   void Put(const FRenderTargetPtr& RenderTarget);
-
-  void SetSize(int width, int height){width_=width;height_=height;}
+  void SetSize(const FIntPoint& size);
 
   private:
-  int width_;
-  int height_;
-  std::mutex lock_;
-  std::stack<FRenderTargetPtr> avialables_;
+  int Width;
+  int Height;
+  std::mutex Lock;
+  std::stack<FRenderTargetPtr> Avialables;
 };
