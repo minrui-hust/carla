@@ -42,13 +42,48 @@ class CARLA_API ADepthLidar : public ASensor
   virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
   private:
+  void CalcResolutionAndCaptureFov();
+
+  void CalcProjection();
+
+  void CalcTextureSize();
+
+  void HandleCaptureOnRenderingThread(SharedPtr<UTextureRenderTarget2D> Target, FAsyncDataStream Stream, FRHICommandListImmediate &InRHICmdList);
 
   UPROPERTY(EditAnywhere)
   FLidarDescription Description;
 
-  /// Scene capture component to capture the depth of the scene
+  // Store the horizon fov of the capture in rad
+  // Fix it at 18 degree at this point
+  constexpr float HFov = carla::geom::Math::ToRadians(18.0f);
+
+  // Store the vertical fov of the capture in rad
+  float VFov;
+
+  // horizon angular resolution in rad
+  float HReso;
+
+  // verticle angular resolution in rad
+  float VReso;
+
+  // verticle elevation angle of laser ray
+  TArray<float> Elevations;
+
+  // Texture Size in pixels
+  int TextureWidth;
+  int TextureHeight;
+  
+  // Orientation of the lidar
+  float CurrentOrientation = 0.0f;
+  float LastOrientation = 0.0f;
+
+  // Lidar rotation rate in rad/second
+  float RotationRate = 0.0f;
+
+  // Scene capture component to capture the depth of the scene
   USceneCaptureComponent2D *CaptureComponent2D = nullptr;
 
+  // Rendering target pool for CaptureComponent to output
   TUniquePtr<FRenderTargetPool> RenderTargetPool = nullptr;
 };
 
@@ -62,7 +97,11 @@ class FRenderTargetPool{
   FRenderTargetPtr Get();
   void Put(const FRenderTargetPtr& RenderTarget);
 
+  void SetSize(int width, int height){width_=width;height_=height;}
+
   private:
+  int width_;
+  int height_;
   std::mutex lock_;
   std::stack<FRenderTargetPtr> avialables_;
 };
