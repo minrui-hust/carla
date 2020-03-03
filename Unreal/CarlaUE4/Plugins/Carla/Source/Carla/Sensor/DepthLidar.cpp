@@ -55,7 +55,9 @@ void ADepthLidar::BeginPlay()
   // LDR is faster
   CaptureComponent2D->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 
+  // Start from zero
   LastOrientation = 0.0f;
+  RayStartOrientation = 0.0f;
 
   Super::BeginPlay();
 }
@@ -64,14 +66,25 @@ void ADepthLidar::Tick(float DeltaTime)
 {
   Super::Tick(DeltaTime);
 
-  float DeltaAngle = RotationRate * DeltaTime;
-  CurrentOrientation = LastOrientation + DeltaAngle;
+  // [LastOrientation, CurrentOrientation) is going to be processed,
+  // each time HStep at most
+  CurrentOrientation = LastOrientation +RotationRate * DeltaTime;
 
-  float CenterAngle = LastOrientation + HFov / 2.0;
-  while (DeltaAngle > 0)
+  float CaptureStartOrientation = LastOrientation;
+  float CaptureEndOrientation = LastOrientation;
+  while (CaptureStartOrientation < CurrentOrientation)
   {
+    // Capture end orientation, clamped by CurrentOrientation
+    CaptureEndOrientation = std::min(CaptureStartOrientation + HStep, CurrentOrientation);
+
+    // Ray end orientation of this capture
+    int N = static_cast<int>((CaptureEndOrientation-RayStartOrientation)/HReso);
+    if( std::fmod(CaptureEndOrientation-RayStartOrientation, HReso) > 0 ) ++N;
+    RayEndOrientation = RayStartOrientation + N*HReso;
+
     // Set the Capture orientation
-    CaptureComponent2D->SetRelativeRotation(FQuat(FVector(0, 0, 1), CenterAngle));
+    float CaptureCenterOrientation = (CaptureStartOrientation+CaptureEndOrientation)/2.0;
+    CaptureComponent2D->SetRelativeRotation(FQuat(FVector(0, 0, 1), CaptureCenterOrientation));
 
     // Get a texture target from texture target pool
     auto TextureTarget = RenderTargetPool->Get();
@@ -79,17 +92,28 @@ void ADepthLidar::Tick(float DeltaTime)
     // Bind texture target to capture component
     CaptureComponent2D->TextureTarget = TextureTarget.Get();
 
-    // Capture the scene, this will rendering the target on rendering thread
+    // Capture the scene, this will rendering the texture on rendering thread
     CaptureComponent2D->CaptureScene();
 
+    // Construct a CaptureInfo of this capture
+    FCaptureInfo CaptureInfo;
+    CaptureInfo.CaptureCenterOrientation = CaptureCenterOrientation;
+    CaptureInfo.RayStartOrientation = RayStartOrientation;
+    CaptureInfo.RayNumber = N;
+    
+    // Process the rendered target on rendering thread
     ENQUEUE_RENDER_COMMAND(FDepthLidar_SendPixelsInRenderThread)
     (
-      std::bind(&ADepthLidar::HandleCaptureOnRenderingThread, this, TextureTarget, GetDataStream(*this), std::placeholders::_1)
+      std::bind(&ADepthLidar::HandleCaptureOnRenderingThread, this, 
+                                                              CaptureInfo, 
+                                                              TextureTarget, 
+                                                              GetDataStream(*this), 
+                                                              std::placeholders::_1)
     );
 
-    // Prepare for next iteration
-    DeltaAngle -= HFov;
-    CenterAngle += HFov;
+    // Update for next capture
+    std::swap(CaptureStartOrientation, CaptureEndOrientation);
+    std::swap(RayStartOrientation, RayEndOrientation);
   }
 
   // Update LastOrientation for next tick, wrap in [0~2*PI)
@@ -97,7 +121,8 @@ void ADepthLidar::Tick(float DeltaTime)
 }
 
 // This function is called on rendering thread
-void ADepthLidar::HandleCaptureOnRenderingThread(FRenderTargetPtr Target,
+void ADepthLidar::HandleCaptureOnRenderingThread(FCaptureInfo CaptureInfo,
+                                                 FRenderTargetPtr Target,
                                                  FAsyncDataStream& Stream,
                                                  FRHICommandListImmediate &InRHICmdList) const
 {
@@ -105,18 +130,42 @@ void ADepthLidar::HandleCaptureOnRenderingThread(FRenderTargetPtr Target,
   if (IsPendingKill())
     return;
 
-  // Get Image from rendring target
-  auto Image = FPixelReader::DumpPixels(*Target);
+  // Dump texture data into buffer
+  auto Buffer = Stream.PopBufferFromPool();
+  FPixelReader::WritePixelsToBuffer( *Target, Buffer, 0, InRHICmdList);
 
   // Make a new LidarMeasurement
   carla::sensor::s11n::LidarMeasurement LidarMeasurement(Description.Channels);
+  LidarMeasurement.SetHorizontalAngle(CaptureInfo.CaptureCenterOrientation);
 
   // Populate the LidarMeasurement
+  float RayOrientation, RayPitch, RayYaw;
   for (int Channel = 0; Channel < Description.Channels; ++Channel)
   {
-    while (0)
+    for(int Ray = 0;Ray<CaptureInfo.RayNumber;++Ray)
     {
-      //TODO
+      // Current ray horizontal orientation
+      RayOrientation = CaptureInfo.RayStartOrientation + Ray*HReso;
+
+      // Current ray yaw relative to capture center
+      RayYaw = RayOrientation - CaptureInfo.CaptureCenterOrientation;
+      RayPitch = Elevations[Channel];
+
+      // Calc the image coordinates from orientation
+      int U = static_cast<int>(std::tan(RayYaw) * static_cast<float>(TextureSize.X) / std::tan(HFov/2.0) / 2.0 + static_cast<float>(TextureSize.X) / 2.0);
+      int V = static_cast<int>(std::tan(RayPitch) * static_cast<float>(TextureSize.Y) / std::tan(VFov/2.0) / 2.0 + static_cast<float>(TextureSize.Y) / 2.0);
+
+      // Get the depth of the point
+      float Depth = reinterpret_cast<float>(Buffer[4*(y*TextureSize.X + x)]);
+
+      // Polar coordinates to cartisian coordinates
+      FVector Point;
+      Point.X = std::cos(RayOrientation)*Depth;
+      Point.Y = std::sin(RayOrientation)*Depth;
+      Point.Z = std::tan(RayPitch)*Depth;
+
+      // Add point into LidarMeasurement
+      LidarMeasurement.WritePoint(Channel, Point);
     }
   }
 

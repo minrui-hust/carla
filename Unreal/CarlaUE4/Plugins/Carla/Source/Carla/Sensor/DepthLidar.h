@@ -43,7 +43,6 @@ class CARLA_API ADepthLidar : public ASensor
 
   virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-  void HandleCaptureOnRenderingThread(FRenderTargetPtr Target, FAsyncDataStream& Stream, FRHICommandListImmediate &InRHICmdList) const;
 
   private:
   void CalcResolutionAndCaptureFov();
@@ -52,37 +51,52 @@ class CARLA_API ADepthLidar : public ASensor
 
   void CalcTextureSize();
 
+  struct FCaptureInfo{
+    float CaptureCenterOrientation = 0.0f
+    float RayStartOrientation = 0.0f;
+    int RayNumber = 0;
+  };
+
   // This function called on rendering thread, pass arguments by value.
   // Make this function const, so that it would not change the state of itself.  RenderTargetPool is an exception
+  void HandleCaptureOnRenderingThread(FCaptureInfo CaptureInfo,
+                                      FRenderTargetPtr Target, 
+                                      FAsyncDataStream& Stream, 
+                                      FRHICommandListImmediate &InRHICmdList) const;
 
   UPROPERTY(EditAnywhere)
   FLidarDescription Description;
 
-  // Store the horizon fov of the capture in rad
-  // Fix it at 18 degree at this point
-  const float HFov = carla::geom::Math::ToRadians(18.0f);
+  // Capture every 18deg in horizon, with Fov 20deg
+  const float HFov = carla::geom::Math::ToRadians(20.0f);
+  const float HStep = carla::geom::Math::ToRadians(18.0f);
 
-  // Store the vertical fov of the capture in rad
+  // Store the vertical fov of the capture in rad.
   float VFov;
 
-  // Horizon angular resolution in rad
+  // Horizon angular resolution in rad.
   float HReso;
 
-  // Verticle angular resolution in rad
+  // Verticle angular resolution in rad.
   float VReso;
 
-  // Verticle elevation angle of laser ray
+  // Verticle elevation angle of laser ray.
   TArray<float> Elevations;
-
-  // Texture Size in pixels
-	FIntPoint TextureSize;
-  
-  // Orientation of the lidar
-  float CurrentOrientation = 0.0f;
-  float LastOrientation = 0.0f;
 
   // Lidar rotation rate in rad/second
   float RotationRate = 0.0f;
+
+  // Texture Size in pixels, calculated based on lidar angular resolution
+	FIntPoint TextureSize;
+  
+  // Orientation of the lidar, erea between LastOrientation and CurrentOrientation
+  // is going to be captured on this tick
+  float LastOrientation = 0.0f;
+  float CurrentOrientation = 0.0f;
+
+  // The laser ray going to be processed in one capture
+  float RayStartOrientation = 0.0f;
+  float RayEndOrientation = 0.0f;
 
   // Scene capture component to capture the depth of the scene
   USceneCaptureComponent2D *CaptureComponent2D = nullptr;
