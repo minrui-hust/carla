@@ -64,8 +64,6 @@ public:
   template <typename TSensor>
   static void SendPixelsInRenderThread(TSensor &Sensor);
 
-private:
-
   /// Copy the pixels in @a RenderTarget into @a Buffer.
   ///
   /// @pre To be called from render-thread.

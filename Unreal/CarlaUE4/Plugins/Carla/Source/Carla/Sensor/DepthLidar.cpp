@@ -10,6 +10,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 
+#include "ConstructorHelpers.h"
+#include "Materials/MaterialInstanceDynamic.h"
+
 FActorDefinition ADepthLidar::GetSensorDefinition()
 {
   // sensor.lidar.depth
@@ -20,12 +23,26 @@ ADepthLidar::ADepthLidar(const FObjectInitializer &ObjectInitializer) : Super(Ob
 {
   // Global settings
   PrimaryActorTick.bCanEverTick = true;
-  PrimaryActorTick.TickGroup = TG_PrePhysics;
 
   // Create capture component
   CaptureComponent2D = CreateDefaultSubobject<USceneCaptureComponent2D>(
-      FName(*FString::Printf(TEXT("SceneCaptureComponent2D"))));
-  CaptureComponent2D->SetupAttachment(RootComponent);
+      FName(*FString::Printf(TEXT("DepthLidar_SceneCaptureComponent2D"))));
+  CaptureComponent2D->SetupAttachment(RootComponent); // Attach this component to parent sensor actor
+
+  // Load the depth post process material
+  ConstructorHelpers::FObjectFinder<UMaterial> Loader(
+    #if PLATFORM_LINUX
+      TEXT("Material'/Carla/PostProcessingMaterials/DepthEffectMaterial_GLSL.DepthEffectMaterial_GLSL'")
+    #else
+      TEXT("Material'/Carla/PostProcessingMaterials/DepthEffectMaterial.DepthEffectMaterial'")
+    #endif
+  );
+
+  // Bind the depth post process material with capture component
+  if (Loader.Succeeded())
+  {
+    CaptureComponent2D->PostProcessSettings.AddBlendable(UMaterialInstanceDynamic::Create(Loader.Object, this), 1.0);
+  }
 
   // Create the rendering pool
   RenderTargetPool = MakeUnique<FRenderTargetPool>();
@@ -49,11 +66,14 @@ void ADepthLidar::Set(const FActorDescription &ActorDescription)
 
 void ADepthLidar::BeginPlay()
 {
-  // Deactivate it, capture manully
+  // Deactivate capture component, capture manully
   CaptureComponent2D->Deactivate();
 
   // LDR is faster
   CaptureComponent2D->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+
+  // Remove other post process effect
+  RemoveOtherPostProcessingEffect(CaptureComponent2D->ShowFlags);
 
   // Start from zero
   LastOrientation = 0.0f;
@@ -90,7 +110,7 @@ void ADepthLidar::Tick(float DeltaTime)
     auto TextureTarget = RenderTargetPool->Get();
 
     // Bind texture target to capture component
-    CaptureComponent2D->TextureTarget = TextureTarget.Get();
+    CaptureComponent2D->TextureTarget = TextureTarget;
 
     // Capture the scene, this will rendering the texture on rendering thread
     CaptureComponent2D->CaptureScene();
@@ -117,7 +137,9 @@ void ADepthLidar::Tick(float DeltaTime)
   }
 
   // Update LastOrientation for next tick, wrap in [0~2*PI)
-  LastOrientation = (CurrentOrientation >= carla::geom::Math::Pi2<float>()) ? CurrentOrientation - carla::geom::Math::Pi2<float>() : CurrentOrientation;
+  LastOrientation = (CurrentOrientation >= carla::geom::Math::Pi2<float>()) 
+                    ? CurrentOrientation - carla::geom::Math::Pi2<float>() 
+                    : CurrentOrientation;
 }
 
 // This function is called on rendering thread
@@ -156,15 +178,15 @@ void ADepthLidar::HandleCaptureOnRenderingThread(FCaptureInfo CaptureInfo,
       int V = static_cast<int>(std::tan(RayPitch) * static_cast<float>(TextureSize.Y) / std::tan(VFov/2.0) / 2.0 + static_cast<float>(TextureSize.Y) / 2.0);
 
       // Get the depth of the point
-      float Depth = reinterpret_cast<float>(Buffer[4*(y*TextureSize.X + x)]);
+      float Depth = *(reinterpret_cast<float*>(Buffer.data() + 4*(V*TextureSize.X + U)));
 
       // Polar coordinates to cartisian coordinates
-      FVector Point;
-      Point.X = std::cos(RayOrientation)*Depth;
-      Point.Y = std::sin(RayOrientation)*Depth;
-      Point.Z = std::tan(RayPitch)*Depth;
+      carla::rpc::Location Point;
+      Point.x = std::cos(RayOrientation)*Depth;
+      Point.y = std::sin(RayOrientation)*Depth;
+      Point.z = std::tan(RayPitch)*Depth;
 
-      // Add point into LidarMeasurement
+      Stream.Send(*this, LidarMeasurement, Stream.PopBufferFromPool());
       LidarMeasurement.WritePoint(Channel, Point);
     }
   }
@@ -238,6 +260,155 @@ void ADepthLidar::CalcTextureSize()
   TextureSize.Y = 4 * static_cast<int>(VFov / VReso);
 }
 
+void ADepthLidar::RemoveOtherPostProcessingEffect(FEngineShowFlags &ShowFlags)
+{
+  ShowFlags.SetAmbientOcclusion(false);
+  ShowFlags.SetAntiAliasing(false);
+  ShowFlags.SetAtmosphericFog(false);
+  // ShowFlags.SetAudioRadius(false);
+  // ShowFlags.SetBillboardSprites(false);
+  ShowFlags.SetBloom(false);
+  // ShowFlags.SetBounds(false);
+  // ShowFlags.SetBrushes(false);
+  // ShowFlags.SetBSP(false);
+  // ShowFlags.SetBSPSplit(false);
+  // ShowFlags.SetBSPTriangles(false);
+  // ShowFlags.SetBuilderBrush(false);
+  // ShowFlags.SetCameraAspectRatioBars(false);
+  // ShowFlags.SetCameraFrustums(false);
+  ShowFlags.SetCameraImperfections(false);
+  ShowFlags.SetCameraInterpolation(false);
+  // ShowFlags.SetCameraSafeFrames(false);
+  // ShowFlags.SetCollision(false);
+  // ShowFlags.SetCollisionPawn(false);
+  // ShowFlags.SetCollisionVisibility(false);
+  ShowFlags.SetColorGrading(false);
+  // ShowFlags.SetCompositeEditorPrimitives(false);
+  // ShowFlags.SetConstraints(false);
+  // ShowFlags.SetCover(false);
+  // ShowFlags.SetDebugAI(false);
+  // ShowFlags.SetDecals(false);
+  // ShowFlags.SetDeferredLighting(false);
+  ShowFlags.SetDepthOfField(false);
+  ShowFlags.SetDiffuse(false);
+  ShowFlags.SetDirectionalLights(false);
+  ShowFlags.SetDirectLighting(false);
+  // ShowFlags.SetDistanceCulledPrimitives(false);
+  // ShowFlags.SetDistanceFieldAO(false);
+  // ShowFlags.SetDistanceFieldGI(false);
+  ShowFlags.SetDynamicShadows(false);
+  // ShowFlags.SetEditor(false);
+  ShowFlags.SetEyeAdaptation(false);
+  ShowFlags.SetFog(false);
+  // ShowFlags.SetGame(false);
+  // ShowFlags.SetGameplayDebug(false);
+  // ShowFlags.SetGBufferHints(false);
+  ShowFlags.SetGlobalIllumination(false);
+  ShowFlags.SetGrain(false);
+  // ShowFlags.SetGrid(false);
+  // ShowFlags.SetHighResScreenshotMask(false);
+  // ShowFlags.SetHitProxies(false);
+  ShowFlags.SetHLODColoration(false);
+  ShowFlags.SetHMDDistortion(false);
+  // ShowFlags.SetIndirectLightingCache(false);
+  // ShowFlags.SetInstancedFoliage(false);
+  // ShowFlags.SetInstancedGrass(false);
+  // ShowFlags.SetInstancedStaticMeshes(false);
+  // ShowFlags.SetLandscape(false);
+  // ShowFlags.SetLargeVertices(false);
+  ShowFlags.SetLensFlares(false);
+  ShowFlags.SetLevelColoration(false);
+  ShowFlags.SetLightComplexity(false);
+  ShowFlags.SetLightFunctions(false);
+  ShowFlags.SetLightInfluences(false);
+  ShowFlags.SetLighting(false);
+  ShowFlags.SetLightMapDensity(false);
+  ShowFlags.SetLightRadius(false);
+  ShowFlags.SetLightShafts(false);
+  // ShowFlags.SetLOD(false);
+  ShowFlags.SetLODColoration(false);
+  // ShowFlags.SetMaterials(false);
+  // ShowFlags.SetMaterialTextureScaleAccuracy(false);
+  // ShowFlags.SetMeshEdges(false);
+  // ShowFlags.SetMeshUVDensityAccuracy(false);
+  // ShowFlags.SetModeWidgets(false);
+  ShowFlags.SetMotionBlur(false);
+  // ShowFlags.SetNavigation(false);
+  ShowFlags.SetOnScreenDebug(false);
+  // ShowFlags.SetOutputMaterialTextureScales(false);
+  // ShowFlags.SetOverrideDiffuseAndSpecular(false);
+  // ShowFlags.SetPaper2DSprites(false);
+  ShowFlags.SetParticles(false);
+  // ShowFlags.SetPivot(false);
+  ShowFlags.SetPointLights(false);
+  // ShowFlags.SetPostProcessing(false);
+  // ShowFlags.SetPostProcessMaterial(false);
+  // ShowFlags.SetPrecomputedVisibility(false);
+  // ShowFlags.SetPrecomputedVisibilityCells(false);
+  // ShowFlags.SetPreviewShadowsIndicator(false);
+  // ShowFlags.SetPrimitiveDistanceAccuracy(false);
+  ShowFlags.SetPropertyColoration(false);
+  // ShowFlags.SetQuadOverdraw(false);
+  // ShowFlags.SetReflectionEnvironment(false);
+  // ShowFlags.SetReflectionOverride(false);
+  ShowFlags.SetRefraction(false);
+  // ShowFlags.SetRendering(false);
+  ShowFlags.SetSceneColorFringe(false);
+  // ShowFlags.SetScreenPercentage(false);
+  ShowFlags.SetScreenSpaceAO(false);
+  ShowFlags.SetScreenSpaceReflections(false);
+  // ShowFlags.SetSelection(false);
+  // ShowFlags.SetSelectionOutline(false);
+  // ShowFlags.SetSeparateTranslucency(false);
+  // ShowFlags.SetShaderComplexity(false);
+  // ShowFlags.SetShaderComplexityWithQuadOverdraw(false);
+  // ShowFlags.SetShadowFrustums(false);
+  // ShowFlags.SetSkeletalMeshes(false);
+  // ShowFlags.SetSkinCache(false);
+  ShowFlags.SetSkyLighting(false);
+  // ShowFlags.SetSnap(false);
+  // ShowFlags.SetSpecular(false);
+  // ShowFlags.SetSplines(false);
+  ShowFlags.SetSpotLights(false);
+  // ShowFlags.SetStaticMeshes(false);
+  ShowFlags.SetStationaryLightOverlap(false);
+  // ShowFlags.SetStereoRendering(false);
+  // ShowFlags.SetStreamingBounds(false);
+  ShowFlags.SetSubsurfaceScattering(false);
+  // ShowFlags.SetTemporalAA(false);
+  // ShowFlags.SetTessellation(false);
+  // ShowFlags.SetTestImage(false);
+  // ShowFlags.SetTextRender(false);
+  // ShowFlags.SetTexturedLightProfiles(false);
+  ShowFlags.SetTonemapper(false);
+  // ShowFlags.SetTranslucency(false);
+  // ShowFlags.SetVectorFields(false);
+  // ShowFlags.SetVertexColors(false);
+  // ShowFlags.SetVignette(false);
+  // ShowFlags.SetVisLog(false);
+  ShowFlags.SetVisualizeAdaptiveDOF(false);
+  ShowFlags.SetVisualizeBloom(false);
+  ShowFlags.SetVisualizeBuffer(false);
+  ShowFlags.SetVisualizeDistanceFieldAO(false);
+  ShowFlags.SetVisualizeDistanceFieldGI(false);
+  ShowFlags.SetVisualizeDOF(false);
+  ShowFlags.SetVisualizeHDR(false);
+  ShowFlags.SetVisualizeLightCulling(false);
+  ShowFlags.SetVisualizeLPV(false);
+  ShowFlags.SetVisualizeMeshDistanceFields(false);
+  ShowFlags.SetVisualizeMotionBlur(false);
+  ShowFlags.SetVisualizeOutOfBoundsPixels(false);
+  ShowFlags.SetVisualizeSenses(false);
+  ShowFlags.SetVisualizeShadingModels(false);
+  ShowFlags.SetVisualizeSSR(false);
+  ShowFlags.SetVisualizeSSS(false);
+  // ShowFlags.SetVolumeLightingSamples(false);
+  // ShowFlags.SetVolumes(false);
+  // ShowFlags.SetWidgetComponents(false);
+  // ShowFlags.SetWireframe(false);
+}
+
+
 // Implemention of the RenderTargetPool
 FRenderTargetPtr FRenderTargetPool::Get()
 {
@@ -253,10 +424,10 @@ FRenderTargetPtr FRenderTargetPool::Get()
   Lock.unlock();
 
   // Pool is empty, create a new one
-  if (!Got.IsValid())
+  if (Got==nullptr)
   {
     //Todo: make clear what this config means
-    Got = MakeShared<UTextureRenderTarget2D>();
+    Got = NewObject<UTextureRenderTarget2D>();
     Got->CompressionSettings = TextureCompressionSettings::TC_Default;
     Got->SRGB = false;
     Got->bAutoGenerateMips = false;

@@ -18,7 +18,7 @@ class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
 class FRenderTargetPool;
 
-using  FRenderTargetPtr = TSharedPtr<UTextureRenderTarget2D>;
+using  FRenderTargetPtr = UTextureRenderTarget2D*;
 
 /**
  * 
@@ -51,8 +51,10 @@ class CARLA_API ADepthLidar : public ASensor
 
   void CalcTextureSize();
 
+  void RemoveOtherPostProcessingEffect(FEngineShowFlags &ShowFlags);
+
   struct FCaptureInfo{
-    float CaptureCenterOrientation = 0.0f
+    float CaptureCenterOrientation = 0.0f;
     float RayStartOrientation = 0.0f;
     int RayNumber = 0;
   };
