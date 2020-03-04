@@ -38,14 +38,10 @@ ADepthLidar::ADepthLidar(const FObjectInitializer &ObjectInitializer) : Super(Ob
     #endif
   );
 
-  // Bind the depth post process material with capture component
   if (Loader.Succeeded())
   {
-    CaptureComponent2D->PostProcessSettings.AddBlendable(UMaterialInstanceDynamic::Create(Loader.Object, this), 1.0);
+    DepthMaterial = Loader.Object;
   }
-
-  // Create the rendering pool
-  RenderTargetPool = MakeUnique<FRenderTargetPool>();
 }
 
 void ADepthLidar::Set(const FActorDescription &ActorDescription)
@@ -53,21 +49,17 @@ void ADepthLidar::Set(const FActorDescription &ActorDescription)
   Super::Set(ActorDescription);
 
   UActorBlueprintFunctionLibrary::SetLidar(ActorDescription, Description);
-
-  CalcResolutionAndCaptureFov();
-
-  CalcProjection();
-
-  CalcTextureSize();
-
-  // Set the texture size of the rendering pool generated
-  RenderTargetPool->SetSize(TextureSize);
 }
 
 void ADepthLidar::BeginPlay()
 {
+  Super::BeginPlay();
+
   // Deactivate capture component, capture manully
   CaptureComponent2D->Deactivate();
+
+  // Set the post depth material
+  CaptureComponent2D->PostProcessSettings.AddBlendable(UMaterialInstanceDynamic::Create(DepthMaterial, this), 1.0);
 
   // LDR is faster
   CaptureComponent2D->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
@@ -75,11 +67,18 @@ void ADepthLidar::BeginPlay()
   // Remove other post process effect
   RemoveOtherPostProcessingEffect(CaptureComponent2D->ShowFlags);
 
+  // Calculate parameters
+  CalcResolutionAndCaptureFov();
+  CalcProjection();
+  CalcTextureSize();
+
+  // Create the rendering pool and
+  // set the texture size of the rendering pool generated
+  RenderTargetPool = MakeUnique<FRenderTargetPool>(TextureSize);
+
   // Start from zero
   LastOrientation = 0.0f;
   RayStartOrientation = 0.0f;
-
-  Super::BeginPlay();
 }
 
 void ADepthLidar::Tick(float DeltaTime)
@@ -88,7 +87,7 @@ void ADepthLidar::Tick(float DeltaTime)
 
   // [LastOrientation, CurrentOrientation) is going to be processed,
   // each time HStep at most
-  CurrentOrientation = LastOrientation +RotationRate * DeltaTime;
+  CurrentOrientation = LastOrientation + RotationRate * DeltaTime;
 
   float CaptureStartOrientation = LastOrientation;
   float CaptureEndOrientation = LastOrientation;
@@ -110,7 +109,7 @@ void ADepthLidar::Tick(float DeltaTime)
     auto TextureTarget = RenderTargetPool->Get();
 
     // Bind texture target to capture component
-    CaptureComponent2D->TextureTarget = TextureTarget;
+    CaptureComponent2D->TextureTarget = TextureTarget.Get();
 
     // Capture the scene, this will rendering the texture on rendering thread
     CaptureComponent2D->CaptureScene();
@@ -207,6 +206,7 @@ void ADepthLidar::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void ADepthLidar::CalcResolutionAndCaptureFov()
 {
   // Calculate verticle angular resolution and elevations
+  Elevations.SetNum(Description.Channels);
   if (Description.VerticleAngles.Num() != Description.Channels)
   {
     VReso = carla::geom::Math::ToRadians(Description.UpperFovLimit - Description.LowerFovLimit) / (Description.Channels - 1);
@@ -217,6 +217,7 @@ void ADepthLidar::CalcResolutionAndCaptureFov()
   }
   else
   {
+    Elevations[0] = carla::geom::Math::ToRadians(Description.VerticleAngles[0]);
     Description.UpperFovLimit = Description.VerticleAngles[0];
     Description.LowerFovLimit = Description.VerticleAngles[0];
     VReso = std::numeric_limits<float>::max();
@@ -226,14 +227,16 @@ void ADepthLidar::CalcResolutionAndCaptureFov()
       Description.LowerFovLimit = std::min(Description.LowerFovLimit,  Description.VerticleAngles[i]);
 
       VReso = std::min(VReso, carla::geom::Math::ToRadians(std::abs(Description.VerticleAngles[i] - Description.VerticleAngles[i - 1])));
+
+      Elevations[i] = carla::geom::Math::ToRadians(Description.VerticleAngles[i]);
     }
-   }
+  }
 
   // Original lidar verticle fov
   float lidar_vfov = carla::geom::Math::ToRadians(Description.UpperFovLimit - Description.LowerFovLimit + 1.0);
 
   // Enlarge the verticle fov cause the edge of image has smaller verticle fov
-  VFov = 2.0 * atan(1.0 / (cos(HFov / 2.0) * tan(lidar_vfov / 2.0)));
+  VFov = 2.0 * atan( tan(lidar_vfov / 2.0) / cos(HFov / 2.0) );
 
   // rotation rate in rad/s
   RotationRate = Description.RotationFrequency * carla::geom::Math::Pi2<float>();
@@ -424,16 +427,16 @@ FRenderTargetPtr FRenderTargetPool::Get()
   Lock.unlock();
 
   // Pool is empty, create a new one
-  if (Got==nullptr)
+  if (!Got.IsValid())
   {
     //Todo: make clear what this config means
-    Got = NewObject<UTextureRenderTarget2D>();
+    Got = TSharedPtr<UTextureRenderTarget2D>(NewObject<UTextureRenderTarget2D>());
     Got->CompressionSettings = TextureCompressionSettings::TC_Default;
     Got->SRGB = false;
     Got->bAutoGenerateMips = false;
     Got->AddressX = TextureAddress::TA_Clamp;
     Got->AddressY = TextureAddress::TA_Clamp;
-    Got->InitCustomFormat(Width, Height, PF_B8G8R8A8, true);
+    Got->InitCustomFormat(Size.X, Size.Y, PF_B8G8R8A8, true);
   }
 
   return Got;
@@ -444,10 +447,4 @@ void FRenderTargetPool::Put(const FRenderTargetPtr &RenderTarget)
   Lock.lock();
   Avialables.push(RenderTarget);
   Lock.unlock();
-}
-
-
-void FRenderTargetPool::SetSize(const FIntPoint& Size){
-  Width = Size.X;
-  Height = Size.Y;
 }

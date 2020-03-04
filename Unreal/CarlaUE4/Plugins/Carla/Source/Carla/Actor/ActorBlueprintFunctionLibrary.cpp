@@ -1296,7 +1296,7 @@ FColor UActorBlueprintFunctionLibrary::RetrieveActorAttributeToColor(
          Default;
 }
 
-TArray<float> RetrieveActorAttributeToFloatArray(
+TArray<float> UActorBlueprintFunctionLibrary::RetrieveActorAttributeToFloatArray(
     const FString &Id,
     const TMap<FString, FActorAttribute> &Attributes,
     const TArray<float> &Default)

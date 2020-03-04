@@ -18,7 +18,7 @@ class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
 class FRenderTargetPool;
 
-using  FRenderTargetPtr = UTextureRenderTarget2D*;
+using  FRenderTargetPtr = TSharedPtr<UTextureRenderTarget2D>;
 
 /**
  * 
@@ -66,9 +66,6 @@ class CARLA_API ADepthLidar : public ASensor
                                       FAsyncDataStream& Stream, 
                                       FRHICommandListImmediate &InRHICmdList) const;
 
-  UPROPERTY(EditAnywhere)
-  FLidarDescription Description;
-
   // Capture every 18deg in horizon, with Fov 20deg
   const float HFov = carla::geom::Math::ToRadians(20.0f);
   const float HStep = carla::geom::Math::ToRadians(18.0f);
@@ -100,7 +97,14 @@ class CARLA_API ADepthLidar : public ASensor
   float RayStartOrientation = 0.0f;
   float RayEndOrientation = 0.0f;
 
+  UPROPERTY(EditAnywhere)
+  FLidarDescription Description;
+  
+  UPROPERTY()
+  UMaterial* DepthMaterial = nullptr;
+
   // Scene capture component to capture the depth of the scene
+  UPROPERTY()
   USceneCaptureComponent2D *CaptureComponent2D = nullptr;
 
   // Rendering target pool for CaptureComponent to output
@@ -113,13 +117,15 @@ class CARLA_API ADepthLidar : public ASensor
  */
 class FRenderTargetPool{
   public:
+  FRenderTargetPool(const FIntPoint& Size):Size(Size){
+    Lock.unlock();
+  }
+
   FRenderTargetPtr Get();
   void Put(const FRenderTargetPtr& RenderTarget);
-  void SetSize(const FIntPoint& size);
 
   private:
-  int Width;
-  int Height;
+  FIntPoint Size;
   std::mutex Lock;
   std::stack<FRenderTargetPtr> Avialables;
 };
