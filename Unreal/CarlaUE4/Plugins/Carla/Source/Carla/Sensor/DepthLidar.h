@@ -18,7 +18,7 @@ class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
 class FRenderTargetPool;
 
-using  FRenderTargetPtr = TSharedPtr<UTextureRenderTarget2D>;
+using  FRenderTargetPtr = UTextureRenderTarget2D*;
 
 /**
  * 
@@ -36,6 +36,16 @@ class CARLA_API ADepthLidar : public ASensor
 
   void Set(const FActorDescription &ActorDescription) override;
 
+  void PutRenderTarget(const FRenderTargetPtr& TextureTarget) const;
+
+  struct FCaptureInfo
+  {
+    float CaptureCenterOrientation = 0.0f;
+    float RayStartOrientation = 0.0f;
+    int RayNumber = 0;
+  };
+  void SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> Stream) const;
+
   protected:
   virtual void BeginPlay() override;
 
@@ -52,19 +62,6 @@ class CARLA_API ADepthLidar : public ASensor
   void CalcTextureSize();
 
   void RemoveOtherPostProcessingEffect(FEngineShowFlags &ShowFlags);
-
-  struct FCaptureInfo{
-    float CaptureCenterOrientation = 0.0f;
-    float RayStartOrientation = 0.0f;
-    int RayNumber = 0;
-  };
-
-  // This function called on rendering thread, pass arguments by value.
-  // Make this function const, so that it would not change the state of itself.  RenderTargetPool is an exception
-  void HandleCaptureOnRenderingThread(FCaptureInfo CaptureInfo,
-                                      FRenderTargetPtr Target, 
-                                      FAsyncDataStream& Stream, 
-                                      FRHICommandListImmediate &InRHICmdList) const;
 
   // Capture every 18deg in horizon, with Fov 20deg
   const float HFov = carla::geom::Math::ToRadians(20.0f);
@@ -97,6 +94,8 @@ class CARLA_API ADepthLidar : public ASensor
   float RayStartOrientation = 0.0f;
   float RayEndOrientation = 0.0f;
 
+  float MaxDepth = 0.0f;
+
   UPROPERTY(EditAnywhere)
   FLidarDescription Description;
   
@@ -120,6 +119,8 @@ class FRenderTargetPool{
   FRenderTargetPool(const FIntPoint& Size):Size(Size){
     Lock.unlock();
   }
+  
+  ~FRenderTargetPool();
 
   FRenderTargetPtr Get();
   void Put(const FRenderTargetPtr& RenderTarget);
@@ -128,4 +129,5 @@ class FRenderTargetPool{
   FIntPoint Size;
   std::mutex Lock;
   std::stack<FRenderTargetPtr> Avialables;
+  std::stack<FRenderTargetPtr> Total;
 };

@@ -450,8 +450,12 @@ void ASceneCaptureSensor::BeginPlay()
     CaptureComponent2D->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
   }
 
-  CaptureComponent2D->UpdateContent();
-  CaptureComponent2D->Activate();
+  //CaptureComponent2D->UpdateContent();
+  //CaptureComponent2D->Activate();
+  CaptureComponent2D->bCaptureEveryFrame = false;
+  CaptureComponent2D->bCaptureOnMovement = false;
+  CaptureComponent2D->bIsActive = false;
+  CaptureComponent2D->bAutoActivate= false;
 
   // Make sure that there is enough time in the render queue.
   UKismetSystemLibrary::ExecuteConsoleCommand(

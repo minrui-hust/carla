@@ -129,7 +129,7 @@ bool ARayCastLidar::ShootLaser(const uint32 Channel, const float HorizontalAngle
     LaserRot,
     LidarBodyRot
   );
-  const auto Range = Description.Range;
+  const auto Range = Description.Range * 1e2;
   FVector EndTrace = Range * UKismetMathLibrary::GetForwardVector(ResultRot) + LidarBodyLoc;
 
   GetWorld()->LineTraceSingleByChannel(
