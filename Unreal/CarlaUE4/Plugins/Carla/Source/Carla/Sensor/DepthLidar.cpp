@@ -93,48 +93,10 @@ void ADepthLidar::BeginPlay()
   RayStartOrientation = 0.0f;
 }
 
-namespace
-{
-
-class FVoidTask
-{
-  TFunction<void(void)> Task;
-
-public:
-  static ESubsequentsMode::Type GetSubsequentsMode()
-  {
-    // Don't support tasks having dependencies on us, reduces task graph overhead tracking and dealing with subsequents
-    return ESubsequentsMode::FireAndForget;
-  }
-
-  template<typename TTask>
-  FVoidTask(TTask&& task)
-      : Task(std::forward<TTask>(task))
-  {
-  }
-
-  FORCEINLINE TStatId GetStatId() const
-  {
-    RETURN_QUICK_DECLARE_CYCLE_STAT(FVoidTask, STATGROUP_TaskGraphTasks);
-  }
-
-  ENamedThreads::Type GetDesiredThread()
-  {
-    return ENamedThreads::AnyThread;
-  }
-
-  void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef &MyCompletionGraphEvent)
-  {
-    Task(); // Call the Task
-  }
-};
-
-} // namespace
-
 void ADepthLidar::Tick(float DeltaTime)
 {
   Super::Tick(DeltaTime);
-  UE_LOG(LogTemp, Log, TEXT("Delta: %f"), DeltaTime);
+  //UE_LOG(LogTemp, Log, TEXT("Delta: %f"), DeltaTime);
 
   // [LastOrientation, CurrentOrientation) is going to be processed,
   // each time HStep at most
@@ -159,6 +121,7 @@ void ADepthLidar::Tick(float DeltaTime)
 
     // Get a texture target from texture target pool
     auto TextureTarget = RenderTargetPool->Get();
+    if(TextureTarget ==nullptr) break;
 
     // Bind texture target to capture component
     CaptureComponent2D->TextureTarget = TextureTarget;
@@ -175,29 +138,18 @@ void ADepthLidar::Tick(float DeltaTime)
     // Process the rendered target on rendering thread
     ENQUEUE_RENDER_COMMAND(FDepthLidar_WaitForCaptureDone)
     ([Sensor = this, CaptureInfo, TextureTarget, Stream = GetDataStream(*this)](FRHICommandListImmediate &InRHICmdList) mutable {
-
-      // Get the fence event on render thread
-      // This fence make sure the capture task has been executed by RHI thread
-      auto ev = InRHICmdList.RHIThreadFence();
-
-      // Wait the fence event on other thread, so not blocking the render thread
-      FGraphEventArray PreRequests = {ev};
       auto StreamPtr = std::make_shared<decltype(Stream)>(std::move(Stream));
-      TGraphTask<FVoidTask>::CreateTask(&PreRequests).ConstructAndDispatchWhenReady([Sensor, CaptureInfo, TextureTarget, StreamPtr]() mutable {
-        // When the event fired,
-        // Call the Async Read to read the texture, with a callback sending the data
-        auto RenderResource = static_cast<const FTextureRenderTarget2DResource *>(TextureTarget->Resource);
-        GDynamicRHI->RHIReadSurfaceDataAsync(RenderResource->GetRenderTargetTexture(),
-                                             FIntRect(0, 0, RenderResource->GetSizeXY().X, RenderResource->GetSizeXY().Y),
-                                             FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX),
-                                             [Sensor, CaptureInfo, TextureTarget, StreamPtr](TArray<FColor> &&Pixels) mutable {
-                                               // Todo check if Sensor is still valid
-                                               {
-                                                 Sensor->PutRenderTarget(TextureTarget);
-                                                 Sensor->SendPixelsOnOtherThread(std::move(Pixels), CaptureInfo, StreamPtr);
-                                               }
-                                             });
-      });
+      auto RenderResource = static_cast<const FTextureRenderTarget2DResource *>(TextureTarget->Resource);
+      InRHICmdList.ReadSurfaceDataAsync(
+          RenderResource->GetRenderTargetTexture(),
+          FIntRect(0, 0, RenderResource->GetSizeXY().X, RenderResource->GetSizeXY().Y),
+          FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX),
+          [Sensor, CaptureInfo, TextureTarget, StreamPtr](TArray<FColor> &&Pixels) mutable {
+            {
+              Sensor->PutRenderTarget(TextureTarget);
+              Sensor->SendPixelsOnOtherThread(std::move(Pixels), CaptureInfo, StreamPtr);
+            }
+          });
     });
 
     // Update for next capture
@@ -205,7 +157,7 @@ void ADepthLidar::Tick(float DeltaTime)
     std::swap(RayStartOrientation, RayEndOrientation);
     ++slice;
   }
-  UE_LOG(LogTemp, Log, TEXT("Slice: %d"), slice);
+  //UE_LOG(LogTemp, Log, TEXT("Slice: %d"), slice);
 
   // Update LastOrientation for next tick, wrap in [0~2*PI)
   LastOrientation = Wrap2PI(CurrentOrientation);
@@ -236,13 +188,13 @@ void ADepthLidar::SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo Ca
 
         // Get the depth
         const auto& Color = Pixels[V*TextureSize.X + U];
-        float Depth = (Color.R + Color.G * 255.0f + Color.B * 255.0f * 255.0f) / static_cast<float>(255 * 255 * 255 - 1) * MaxDepth;
+        float Depth = (Color.R + Color.G * 256.0f + Color.B * 256.0f * 256.0f) / static_cast<float>(256 * 256 * 256 - 1) * MaxDepth;
 
         // Get point coordinate in Capture frame
         carla::rpc::Location Point;
         Point.x = cos(RayOrientation) * Depth / cos(RayYaw);
         Point.y = sin(RayOrientation) * Depth / cos(RayYaw);
-        Point.z = std::tan(RayPitch) * Depth;
+        Point.z = -std::tan(RayPitch) * Depth / cos(RayYaw);
 
         if (Point.Length() < Description.Range)
         {
@@ -324,8 +276,9 @@ void ADepthLidar::CalcProjection()
 void ADepthLidar::CalcTextureSize()
 {
   // Upsample 4 times to mitigate aliasing
-  TextureSize.X = 2  * static_cast<int>(HFov / HReso);
-  TextureSize.Y = 2 *  static_cast<int>(VFov / VReso);
+  TextureSize.X = 4 *  static_cast<int>(HFov / HReso);
+  TextureSize.Y = 4 *  static_cast<int>(VFov / VReso);
+  UE_LOG(LogTemp, Log, TEXT("Texture Size: %d, %d"), TextureSize.X, TextureSize.Y);
 }
 
 void ADepthLidar::RemoveOtherPostProcessingEffect(FEngineShowFlags &ShowFlags)
@@ -498,12 +451,14 @@ FRenderTargetPtr FRenderTargetPool::Get()
   Lock.unlock();
 
   // Pool is empty, create a new one
-  if (Got==nullptr)
+  if (Got==nullptr && Total.size()<10)
   {
     //Todo: make clear what this config means
     Got = NewObject<UTextureRenderTarget2D>();
     Got->AddToRoot();
     Total.push(Got);
+
+    UE_LOG(LogTemp, Log, TEXT("Total RenderTargets: %d"), Total.size());
 
     Got->CompressionSettings = TextureCompressionSettings::TC_Default;
     Got->SRGB = false;
@@ -514,6 +469,7 @@ FRenderTargetPtr FRenderTargetPool::Get()
     Got->AddressY = TextureAddress::TA_Clamp;
     Got->InitCustomFormat(Size.X, Size.Y, PF_B8G8R8A8, true);
   }
+
 
   return Got;
 }

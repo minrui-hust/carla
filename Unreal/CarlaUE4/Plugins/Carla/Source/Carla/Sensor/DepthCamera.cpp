@@ -31,5 +31,5 @@ ADepthCamera::ADepthCamera(const FObjectInitializer &ObjectInitializer)
 void ADepthCamera::Tick(float DeltaTime)
 {
   Super::Tick(DeltaTime);
-  FPixelReader::SendPixelsInRenderThread(*this);
+  FPixelReader::SendPixelsAsync(*this);
 }

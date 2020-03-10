@@ -64,8 +64,8 @@ class CARLA_API ADepthLidar : public ASensor
   void RemoveOtherPostProcessingEffect(FEngineShowFlags &ShowFlags);
 
   // Capture every 18deg in horizon, with Fov 20deg
-  const float HFov = carla::geom::Math::ToRadians(20.0f);
-  const float HStep = carla::geom::Math::ToRadians(18.0f);
+  const float HFov = carla::geom::Math::ToRadians(38.0f);
+  const float HStep = carla::geom::Math::ToRadians(36.0f);
 
   // Store the vertical fov of the capture in rad.
   float VFov;

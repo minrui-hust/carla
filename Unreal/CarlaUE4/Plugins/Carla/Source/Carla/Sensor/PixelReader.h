@@ -64,6 +64,9 @@ public:
   template <typename TSensor>
   static void SendPixelsInRenderThread(TSensor &Sensor);
 
+  template <typename TSensor>
+  static void SendPixelsAsync(TSensor &Sensor);
+
   /// Copy the pixels in @a RenderTarget into @a Buffer.
   ///
   /// @pre To be called from render-thread.
@@ -104,4 +107,26 @@ void FPixelReader::SendPixelsInRenderThread(TSensor &Sensor)
       }
     }
   );
+}
+
+template <typename TSensor>
+void FPixelReader::SendPixelsAsync(TSensor &Sensor)
+{
+  check(Sensor.CaptureRenderTarget != nullptr);
+
+  ENQUEUE_RENDER_COMMAND(FDepthLidar_WaitForCaptureDone)
+  ([&Sensor, TextureTarget = Sensor.CaptureRenderTarget, Stream = Sensor.GetDataStream(Sensor)](FRHICommandListImmediate &InRHICmdList) mutable {
+    auto StreamPtr = std::make_shared<decltype(Stream)>(std::move(Stream));
+    auto RenderResource = static_cast<const FTextureRenderTarget2DResource *>(TextureTarget->Resource);
+    InRHICmdList.ReadSurfaceDataAsync(
+        RenderResource->GetRenderTargetTexture(),
+        FIntRect(0, 0, RenderResource->GetSizeXY().X, RenderResource->GetSizeXY().Y),
+        FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX),
+        [&Sensor, TextureTarget, StreamPtr](TArray<FColor> &&Pixels) mutable {
+          auto Buffer = StreamPtr->PopBufferFromPool();
+          auto Offset = carla::sensor::SensorRegistry::get<TSensor *>::type::header_offset;
+          Buffer.copy_from(Offset, Pixels);
+          StreamPtr->Send(Sensor, std::move(Buffer));
+        });
+  });
 }

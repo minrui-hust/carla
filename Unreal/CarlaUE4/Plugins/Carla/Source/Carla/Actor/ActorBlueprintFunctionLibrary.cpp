@@ -804,12 +804,12 @@ void UActorBlueprintFunctionLibrary::MakeLidarDefinition(
   FActorVariation Range;
   Range.Id = TEXT("range");
   Range.Type = EActorAttributeType::Float;
-  Range.RecommendedValues = { TEXT("10.0") }; // 10 meters
+  Range.RecommendedValues = { TEXT("100.0") }; // 100 meters
   // Points per second.
   FActorVariation PointsPerSecond;
   PointsPerSecond.Id = TEXT("points_per_second");
   PointsPerSecond.Type = EActorAttributeType::Int;
-  PointsPerSecond.RecommendedValues = { TEXT("56000") };
+  PointsPerSecond.RecommendedValues = { TEXT("18000") };
   // Frequency.
   FActorVariation Frequency;
   Frequency.Id = TEXT("rotation_frequency");
@@ -819,12 +819,12 @@ void UActorBlueprintFunctionLibrary::MakeLidarDefinition(
   FActorVariation UpperFOV;
   UpperFOV.Id = TEXT("upper_fov");
   UpperFOV.Type = EActorAttributeType::Float;
-  UpperFOV.RecommendedValues = { TEXT("10.0") };
+  UpperFOV.RecommendedValues = { TEXT("20.0") };
   // Lower FOV limit.
   FActorVariation LowerFOV;
   LowerFOV.Id = TEXT("lower_fov");
   LowerFOV.Type = EActorAttributeType::Float;
-  LowerFOV.RecommendedValues = { TEXT("-30.0") };
+  LowerFOV.RecommendedValues = { TEXT("-20.0") };
   // VerticleAngles.
   FActorVariation VerticleAngles;
   VerticleAngles.Id = TEXT("verticle_angles");
