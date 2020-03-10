@@ -77,7 +77,7 @@ void ADepthLidar::BeginPlay()
   CaptureComponent2D->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 
   // Remove other post process effect
-  RemoveOtherPostProcessingEffect(CaptureComponent2D->ShowFlags);
+  // RemoveOtherPostProcessingEffect(CaptureComponent2D->ShowFlags);
 
   // Calculate parameters
   CalcResolutionAndCaptureFov();
@@ -462,9 +462,8 @@ FRenderTargetPtr FRenderTargetPool::Get()
 
     Got->CompressionSettings = TextureCompressionSettings::TC_Default;
     Got->SRGB = false;
-    Got->bHDR_DEPRECATED = false;
     Got->bAutoGenerateMips = false;
-    Got->bGPUSharedFlag = true;
+    Got->bForceLinearGamma= true;
     Got->AddressX = TextureAddress::TA_Clamp;
     Got->AddressY = TextureAddress::TA_Clamp;
     Got->InitCustomFormat(Size.X, Size.Y, PF_B8G8R8A8, true);
