@@ -17,7 +17,7 @@
 
 float Wrap2PI(float in){
   return in > carla::geom::Math::Pi2<float>()?
-         in - carla::geom::Math::Pi2<float>():
+         in - carla::geom::Math::Pi2<float>() * static_cast<int>(in/carla::geom::Math::Pi2<float>()):
          in;
 }
 
@@ -66,9 +66,10 @@ void ADepthLidar::BeginPlay()
   Super::BeginPlay();
 
   // Deactivate auto capture, capture manully
-  //CaptureComponent2D->bCaptureEveryFrame = false;
-  //CaptureComponent2D->bCaptureOnMovement = false;
   CaptureComponent2D->Deactivate();
+  CaptureComponent2D->bAutoActivate = false;
+  CaptureComponent2D->bCaptureEveryFrame = false;
+  CaptureComponent2D->bCaptureOnMovement = false;
 
   // Set the post depth material
   CaptureComponent2D->PostProcessSettings.AddBlendable(UMaterialInstanceDynamic::Create(DepthMaterial, this), 1.0);
@@ -76,17 +77,15 @@ void ADepthLidar::BeginPlay()
   // LDR is faster
   CaptureComponent2D->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 
-  // Remove other post process effect
-  // RemoveOtherPostProcessingEffect(CaptureComponent2D->ShowFlags);
-
   // Calculate parameters
   CalcResolutionAndCaptureFov();
-  CalcProjection();
-  CalcTextureSize();
+  SetProjectionMatrix();
+  SetTextureSize();
 
   // Create the rendering pool and
   // set the texture size of the rendering pool generated
-  RenderTargetPool = MakeUnique<FRenderTargetPool>(TextureSize);
+  RenderTargetPool = MakeUnique<FRenderTargetPool>();
+  check(RenderTargetPool.IsValid());
 
   // Start from zero
   LastOrientation = 0.0f;
@@ -98,17 +97,25 @@ void ADepthLidar::Tick(float DeltaTime)
   Super::Tick(DeltaTime);
   //UE_LOG(LogTemp, Log, TEXT("Delta: %f"), DeltaTime);
 
+  // Total scan fov this tick
+  float ScanFov = RotationRate * DeltaTime;
+
+  // We should use how many capture to cover this scan
+  int CaptureNum = SetHFov(ScanFov);
+
+  // Update the texture size
+  SetTextureSize();
+
   // [LastOrientation, CurrentOrientation) is going to be processed,
   // each time HStep at most
-  CurrentOrientation = LastOrientation + RotationRate * DeltaTime;
+  CurrentOrientation = LastOrientation + ScanFov;
 
-  int slice = 0;
-  float CaptureStartOrientation = LastOrientation;
-  float CaptureEndOrientation = LastOrientation;
-  while (CaptureStartOrientation < CurrentOrientation && (CaptureStartOrientation-LastOrientation) <= carla::geom::Math::Pi2<float>())
+  // Process all the CaptureNum captures
+  for (int i = 0; i < CaptureNum; ++i)
   {
-    // Capture end orientation, clamped by CurrentOrientation and 2pi
-    CaptureEndOrientation = std::min(CaptureStartOrientation + HStep, std::min(CurrentOrientation, LastOrientation+carla::geom::Math::Pi2<float>()));
+    // Capture orientation
+    float CaptureStartOrientation = LastOrientation + i * HStep;
+    float CaptureEndOrientation = LastOrientation + (i + 1) * HStep;
 
     // Ray end orientation of this capture
     int N = static_cast<int>((CaptureEndOrientation-RayStartOrientation)/HReso);
@@ -119,92 +126,130 @@ void ADepthLidar::Tick(float DeltaTime)
     float CaptureCenterOrientation = (CaptureStartOrientation+CaptureEndOrientation)/2.0;
     CaptureComponent2D->SetRelativeRotation(FQuat(FVector(0,0,1), CaptureCenterOrientation));
 
-    // Get a texture target from texture target pool
-    auto TextureTarget = RenderTargetPool->Get();
-    if(TextureTarget ==nullptr) break;
-
-    // Bind texture target to capture component
-    CaptureComponent2D->TextureTarget = TextureTarget;
-
-    // Capture the scene, this will rendering the texture on rendering thread
-    CaptureComponent2D->CaptureScene();
-
     // Construct a CaptureInfo of this capture
     FCaptureInfo CaptureInfo;
     CaptureInfo.CaptureCenterOrientation = CaptureCenterOrientation;
     CaptureInfo.RayStartOrientation = RayStartOrientation;
     CaptureInfo.RayNumber = N;
+    CaptureInfo.Empty = false;
 
-    // Process the rendered target on rendering thread
-    ENQUEUE_RENDER_COMMAND(FDepthLidar_WaitForCaptureDone)
-    ([Sensor = this, CaptureInfo, TextureTarget, Stream = GetDataStream(*this)](FRHICommandListImmediate &InRHICmdList) mutable {
-      auto StreamPtr = std::make_shared<decltype(Stream)>(std::move(Stream));
-      auto RenderResource = static_cast<const FTextureRenderTarget2DResource *>(TextureTarget->Resource);
-      InRHICmdList.ReadSurfaceDataAsync(
-          RenderResource->GetRenderTargetTexture(),
-          FIntRect(0, 0, RenderResource->GetSizeXY().X, RenderResource->GetSizeXY().Y),
-          FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX),
-          [Sensor, CaptureInfo, TextureTarget, StreamPtr](TArray<FColor> &&Pixels) mutable {
-            {
-              Sensor->PutRenderTarget(TextureTarget);
+    // Get a texture target from texture target pool
+    auto TextureTarget = RenderTargetPool->Get(TextureSize);
+
+    // Process only if there is available texture, otherwise skip this scan
+    if (TextureTarget) {
+      // Bind texture target to capture component
+      CaptureComponent2D->TextureTarget = TextureTarget;
+
+      // Capture the scene, this will rendering the texture on rendering thread
+      CaptureComponent2D->CaptureScene();
+
+      // Process the rendered target on rendering thread
+      ENQUEUE_RENDER_COMMAND(FDepthLidar_WaitForCaptureDone)
+      ([Sensor = this, CaptureInfo, TextureTarget, Stream = GetDataStream(*this)](FRHICommandListImmediate &InRHICmdList) mutable {
+        auto StreamPtr = std::make_shared<decltype(Stream)>(std::move(Stream));
+        auto RenderResource = static_cast<const FTextureRenderTarget2DResource *>(TextureTarget->Resource);
+        InRHICmdList.ReadSurfaceDataAsync(
+            RenderResource->GetRenderTargetTexture(),
+            FIntRect(0, 0, RenderResource->GetSizeXY().X, RenderResource->GetSizeXY().Y),
+            FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX),
+            [Sensor, CaptureInfo, TextureTarget, StreamPtr](TArray<FColor> &&Pixels) mutable {
+              check(TextureTarget);
+              Sensor->PutRenderTarget(TextureTarget); // Return the texture
               Sensor->SendPixelsOnOtherThread(std::move(Pixels), CaptureInfo, StreamPtr);
-            }
-          });
-    });
+            });
+      });
+    }else{
+      // Send dummy one
+      CaptureInfo.Empty = true;
+      auto StreamPtr = std::make_shared<FAsyncDataStream>(GetDataStream(*this));
+      auto DummyPixels = TArray<FColor>{};
+      SendPixelsOnOtherThread(DummyPixels, CaptureInfo, StreamPtr);
+    }
 
     // Update for next capture
-    std::swap(CaptureStartOrientation, CaptureEndOrientation);
     std::swap(RayStartOrientation, RayEndOrientation);
-    ++slice;
   }
-  //UE_LOG(LogTemp, Log, TEXT("Slice: %d"), slice);
 
   // Update LastOrientation for next tick, wrap in [0~2*PI)
   LastOrientation = Wrap2PI(CurrentOrientation);
+  RayStartOrientation = Wrap2PI(RayStartOrientation);
 }
 
 void ADepthLidar::SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> StreamPtr) const
 {
     // Make a new LidarMeasurement
     carla::sensor::s11n::LidarMeasurement LidarMeasurement(Description.Channels);
-    LidarMeasurement.SetHorizontalAngle(CaptureInfo.CaptureCenterOrientation);
+    carla::sensor::s11n::LidarMeasurement LidarMeasurementWrap(Description.Channels);
 
-    // Populate the LidarMeasurement
-    float RayOrientation, RayPitch, RayYaw;
-    for (int Channel = 0; Channel < Description.Channels; ++Channel)
+    float RayStartOrientation = Wrap2PI(CaptureInfo.RayStartOrientation);
+
+    if (!CaptureInfo.Empty)
     {
-      for (int Ray = 0; Ray < CaptureInfo.RayNumber; ++Ray)
+      float RayOrientation, RayPitch, RayYaw;
+      for (int Channel = 0; Channel < Description.Channels; ++Channel)
       {
-        // Current ray horizontal orientation
-        RayOrientation = CaptureInfo.RayStartOrientation + Ray * HReso;
-
-        // Current ray yaw relative to capture center
-        RayYaw = RayOrientation - CaptureInfo.CaptureCenterOrientation;
-        RayPitch = Elevations[Channel];
-
-        // Calc the image coordinates from orientation
-        int U = static_cast<int>((std::tan(RayYaw) / std::tan(HFov / 2.0) + 1.0) * (0.5 * static_cast<float>(TextureSize.X)));
-        int V = static_cast<int>((1.0 - std::tan(RayPitch) / std::tan(VFov / 2.0) / std::cos(RayYaw)) * (0.5 * static_cast<float>(TextureSize.Y)));
-
-        // Get the depth
-        const auto& Color = Pixels[V*TextureSize.X + U];
-        float Depth = (Color.R + Color.G * 256.0f + Color.B * 256.0f * 256.0f) / static_cast<float>(256 * 256 * 256 - 1) * MaxDepth;
-
-        // Get point coordinate in Capture frame
-        carla::rpc::Location Point;
-        Point.x = cos(RayOrientation) * Depth / cos(RayYaw);
-        Point.y = sin(RayOrientation) * Depth / cos(RayYaw);
-        Point.z = -std::tan(RayPitch) * Depth / cos(RayYaw);
-
-        if (Point.Length() < Description.Range)
+        for (int Ray = 0; Ray < CaptureInfo.RayNumber; ++Ray)
         {
-          LidarMeasurement.WritePoint(Channel, Point);
+          // Current ray horizontal orientation
+          RayOrientation = CaptureInfo.RayStartOrientation + Ray * HReso;
+
+          // Current ray yaw relative to capture center
+          RayYaw = RayOrientation - CaptureInfo.CaptureCenterOrientation;
+          RayPitch = Elevations[Channel];
+
+          // Calc the image coordinates from orientation
+          int U = static_cast<int>((std::tan(RayYaw) / std::tan(HFov / 2.0) + 1.0) * (0.5 * static_cast<float>(TextureSize.X)));
+          int V = static_cast<int>((1.0 - std::tan(RayPitch) / std::tan(VFov / 2.0) / std::cos(RayYaw)) * (0.5 * static_cast<float>(TextureSize.Y)));
+
+          // Get the depth
+          const auto &Color = Pixels[V * TextureSize.X + U];
+          float Depth = (Color.R + Color.G * 256.0f + Color.B * 256.0f * 256.0f) / static_cast<float>(256 * 256 * 256 - 1) * MaxDepth;
+
+          // Get point coordinate in Capture frame
+          carla::rpc::Location Point;
+          Point.x = cos(RayOrientation) * Depth / cos(RayYaw);
+          Point.y = sin(RayOrientation) * Depth / cos(RayYaw);
+          Point.z = -std::tan(RayPitch) * Depth / cos(RayYaw);
+
+          if (Point.Length() < Description.Range)
+          {
+            if (RayOrientation > RayStartOrientation)
+            {
+              LidarMeasurement.WritePoint(Channel, Point);
+            }
+            else
+            {
+              LidarMeasurementWrap.WritePoint(Channel, Point);
+            }
+          }
         }
       }
-  }
+    }
 
-  // Send the LidarMeasurement via stream
-  StreamPtr->Send(*this, LidarMeasurement, StreamPtr->PopBufferFromPool());
+    // Check wether wrap happens
+    float RayEndOrientation = Wrap2PI(CaptureInfo.RayStartOrientation + CaptureInfo.RayNumber * HReso);
+    float RayMidOrientation = RayEndOrientation;
+    if (RayEndOrientation < RayStartOrientation)
+    {
+      int N = static_cast<int>((carla::geom::Math::Pi2<float>() - RayStartOrientation) / HReso);
+      if (RayStartOrientation + N * HReso < carla::geom::Math::Pi2<float>())
+        ++N;
+      RayMidOrientation = Wrap2PI(RayStartOrientation + N * HReso);
+    }
+
+    // Send the normal one
+    LidarMeasurement.SetHorizontalAngle(RayStartOrientation);
+    LidarMeasurement.SetHorizontalEndAngle(RayMidOrientation);
+    StreamPtr->Send(*this, LidarMeasurement, StreamPtr->PopBufferFromPool());
+
+    // Send the wrap one
+    if (RayMidOrientation < RayEndOrientation)
+    {
+      LidarMeasurementWrap.SetHorizontalAngle(RayMidOrientation);
+      LidarMeasurementWrap.SetHorizontalEndAngle(RayEndOrientation);
+      StreamPtr->Send(*this, LidarMeasurementWrap, StreamPtr->PopBufferFromPool());
+    }
 }
 
 void ADepthLidar::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -220,10 +265,10 @@ void ADepthLidar::CalcResolutionAndCaptureFov()
   Elevations.SetNum(Description.Channels);
   if (Description.VerticleAngles.Num() != Description.Channels)
   {
-    VReso = carla::geom::Math::ToRadians(Description.UpperFovLimit - Description.LowerFovLimit) / (Description.Channels - 1);
+    float delta = carla::geom::Math::ToRadians(Description.UpperFovLimit - Description.LowerFovLimit) / (Description.Channels - 1.0);
     for (int i = 0; i < Description.Channels; ++i)
     {
-      Elevations[i] = carla::geom::Math::ToRadians(Description.LowerFovLimit) + i * VReso;
+      Elevations[i] = carla::geom::Math::ToRadians(Description.LowerFovLimit) + i * delta;
     }
   }
   else
@@ -231,23 +276,23 @@ void ADepthLidar::CalcResolutionAndCaptureFov()
     Elevations[0] = carla::geom::Math::ToRadians(Description.VerticleAngles[0]);
     Description.UpperFovLimit = Description.VerticleAngles[0];
     Description.LowerFovLimit = Description.VerticleAngles[0];
-    VReso = std::numeric_limits<float>::max();
     for (int i = 1; i < Description.Channels; ++i)
     {
       Description.UpperFovLimit = std::max(Description.UpperFovLimit,  Description.VerticleAngles[i]);
       Description.LowerFovLimit = std::min(Description.LowerFovLimit,  Description.VerticleAngles[i]);
 
-      VReso = std::min(VReso, carla::geom::Math::ToRadians(std::abs(Description.VerticleAngles[i] - Description.VerticleAngles[i - 1])));
-
       Elevations[i] = carla::geom::Math::ToRadians(Description.VerticleAngles[i]);
     }
   }
   
-  // Original lidar verticle fov
+  // Original lidar verticle fov, enlarged by 2 degrees
   float lidar_vfov = carla::geom::Math::ToRadians(std::max(std::abs(Description.UpperFovLimit), std::abs(Description.LowerFovLimit))*2 + 2.0);
 
   // Enlarge the verticle fov cause the edge of image has smaller verticle fov
   VFov = 2.0 * atan( tan(lidar_vfov / 2.0) / cos(HFov / 2.0) );
+
+  // set the HFov to the default one, may change later
+  HFov = MaxHStep + carla::geom::Math::ToRadians(2.0);
 
   // rotation rate in rad/s
   RotationRate = Description.RotationFrequency * carla::geom::Math::Pi2<float>();
@@ -258,7 +303,7 @@ void ADepthLidar::CalcResolutionAndCaptureFov()
 }
 
 // Calculate the camera projection matrix
-void ADepthLidar::CalcProjection()
+void ADepthLidar::SetProjectionMatrix()
 {
   // Use custom projection matrix
   CaptureComponent2D->bUseCustomProjectionMatrix = true;
@@ -273,160 +318,23 @@ void ADepthLidar::CalcProjection()
   }
 }
 
-void ADepthLidar::CalcTextureSize()
+int ADepthLidar::SetHFov(float ScanFov)
+{
+  int N=1;
+  while(MaxHStep < ScanFov/N) ++N;
+
+  HStep = ScanFov/N;
+  HFov = HStep + carla::geom::Math::ToRadians(2.0);
+
+  return N;
+}
+
+void ADepthLidar::SetTextureSize()
 {
   // Upsample 4 times to mitigate aliasing
   TextureSize.X = 2 *  static_cast<int>(HFov / HReso);
   TextureSize.Y = 2 *  static_cast<int>(VFov / VReso);
   UE_LOG(LogTemp, Log, TEXT("Texture Size: %d, %d"), TextureSize.X, TextureSize.Y);
-}
-
-void ADepthLidar::RemoveOtherPostProcessingEffect(FEngineShowFlags &ShowFlags)
-{
-  ShowFlags.SetAmbientOcclusion(false);
-  ShowFlags.SetAntiAliasing(false);
-  ShowFlags.SetAtmosphericFog(false);
-  // ShowFlags.SetAudioRadius(false);
-  // ShowFlags.SetBillboardSprites(false);
-  ShowFlags.SetBloom(false);
-  // ShowFlags.SetBounds(false);
-  // ShowFlags.SetBrushes(false);
-  // ShowFlags.SetBSP(false);
-  // ShowFlags.SetBSPSplit(false);
-  // ShowFlags.SetBSPTriangles(false);
-  // ShowFlags.SetBuilderBrush(false);
-  // ShowFlags.SetCameraAspectRatioBars(false);
-  // ShowFlags.SetCameraFrustums(false);
-  ShowFlags.SetCameraImperfections(false);
-  ShowFlags.SetCameraInterpolation(false);
-  // ShowFlags.SetCameraSafeFrames(false);
-  // ShowFlags.SetCollision(false);
-  // ShowFlags.SetCollisionPawn(false);
-  // ShowFlags.SetCollisionVisibility(false);
-  ShowFlags.SetColorGrading(false);
-  // ShowFlags.SetCompositeEditorPrimitives(false);
-  // ShowFlags.SetConstraints(false);
-  // ShowFlags.SetCover(false);
-  // ShowFlags.SetDebugAI(false);
-  // ShowFlags.SetDecals(false);
-  // ShowFlags.SetDeferredLighting(false);
-  ShowFlags.SetDepthOfField(false);
-  ShowFlags.SetDiffuse(false);
-  ShowFlags.SetDirectionalLights(false);
-  ShowFlags.SetDirectLighting(false);
-  // ShowFlags.SetDistanceCulledPrimitives(false);
-  // ShowFlags.SetDistanceFieldAO(false);
-  // ShowFlags.SetDistanceFieldGI(false);
-  ShowFlags.SetDynamicShadows(false);
-  // ShowFlags.SetEditor(false);
-  ShowFlags.SetEyeAdaptation(false);
-  ShowFlags.SetFog(false);
-  // ShowFlags.SetGame(false);
-  // ShowFlags.SetGameplayDebug(false);
-  // ShowFlags.SetGBufferHints(false);
-  ShowFlags.SetGlobalIllumination(false);
-  ShowFlags.SetGrain(false);
-  // ShowFlags.SetGrid(false);
-  // ShowFlags.SetHighResScreenshotMask(false);
-  // ShowFlags.SetHitProxies(false);
-  ShowFlags.SetHLODColoration(false);
-  ShowFlags.SetHMDDistortion(false);
-  // ShowFlags.SetIndirectLightingCache(false);
-  // ShowFlags.SetInstancedFoliage(false);
-  // ShowFlags.SetInstancedGrass(false);
-  // ShowFlags.SetInstancedStaticMeshes(false);
-  // ShowFlags.SetLandscape(false);
-  // ShowFlags.SetLargeVertices(false);
-  ShowFlags.SetLensFlares(false);
-  ShowFlags.SetLevelColoration(false);
-  ShowFlags.SetLightComplexity(false);
-  ShowFlags.SetLightFunctions(false);
-  ShowFlags.SetLightInfluences(false);
-  ShowFlags.SetLighting(false);
-  ShowFlags.SetLightMapDensity(false);
-  ShowFlags.SetLightRadius(false);
-  ShowFlags.SetLightShafts(false);
-  // ShowFlags.SetLOD(false);
-  ShowFlags.SetLODColoration(false);
-  // ShowFlags.SetMaterials(false);
-  // ShowFlags.SetMaterialTextureScaleAccuracy(false);
-  // ShowFlags.SetMeshEdges(false);
-  // ShowFlags.SetMeshUVDensityAccuracy(false);
-  // ShowFlags.SetModeWidgets(false);
-  ShowFlags.SetMotionBlur(false);
-  // ShowFlags.SetNavigation(false);
-  ShowFlags.SetOnScreenDebug(false);
-  // ShowFlags.SetOutputMaterialTextureScales(false);
-  // ShowFlags.SetOverrideDiffuseAndSpecular(false);
-  // ShowFlags.SetPaper2DSprites(false);
-  ShowFlags.SetParticles(false);
-  // ShowFlags.SetPivot(false);
-  ShowFlags.SetPointLights(false);
-  // ShowFlags.SetPostProcessing(false);
-  // ShowFlags.SetPostProcessMaterial(false);
-  // ShowFlags.SetPrecomputedVisibility(false);
-  // ShowFlags.SetPrecomputedVisibilityCells(false);
-  // ShowFlags.SetPreviewShadowsIndicator(false);
-  // ShowFlags.SetPrimitiveDistanceAccuracy(false);
-  ShowFlags.SetPropertyColoration(false);
-  // ShowFlags.SetQuadOverdraw(false);
-  // ShowFlags.SetReflectionEnvironment(false);
-  // ShowFlags.SetReflectionOverride(false);
-  ShowFlags.SetRefraction(false);
-  // ShowFlags.SetRendering(false);
-  ShowFlags.SetSceneColorFringe(false);
-  // ShowFlags.SetScreenPercentage(false);
-  ShowFlags.SetScreenSpaceAO(false);
-  ShowFlags.SetScreenSpaceReflections(false);
-  // ShowFlags.SetSelection(false);
-  // ShowFlags.SetSelectionOutline(false);
-  // ShowFlags.SetSeparateTranslucency(false);
-  // ShowFlags.SetShaderComplexity(false);
-  // ShowFlags.SetShaderComplexityWithQuadOverdraw(false);
-  // ShowFlags.SetShadowFrustums(false);
-  // ShowFlags.SetSkeletalMeshes(false);
-  // ShowFlags.SetSkinCache(false);
-  ShowFlags.SetSkyLighting(false);
-  // ShowFlags.SetSnap(false);
-  // ShowFlags.SetSpecular(false);
-  // ShowFlags.SetSplines(false);
-  ShowFlags.SetSpotLights(false);
-  // ShowFlags.SetStaticMeshes(false);
-  ShowFlags.SetStationaryLightOverlap(false);
-  // ShowFlags.SetStereoRendering(false);
-  // ShowFlags.SetStreamingBounds(false);
-  ShowFlags.SetSubsurfaceScattering(false);
-  // ShowFlags.SetTemporalAA(false);
-  // ShowFlags.SetTessellation(false);
-  // ShowFlags.SetTestImage(false);
-  // ShowFlags.SetTextRender(false);
-  // ShowFlags.SetTexturedLightProfiles(false);
-  ShowFlags.SetTonemapper(false);
-  // ShowFlags.SetTranslucency(false);
-  // ShowFlags.SetVectorFields(false);
-  // ShowFlags.SetVertexColors(false);
-  // ShowFlags.SetVignette(false);
-  // ShowFlags.SetVisLog(false);
-  ShowFlags.SetVisualizeAdaptiveDOF(false);
-  ShowFlags.SetVisualizeBloom(false);
-  ShowFlags.SetVisualizeBuffer(false);
-  ShowFlags.SetVisualizeDistanceFieldAO(false);
-  ShowFlags.SetVisualizeDistanceFieldGI(false);
-  ShowFlags.SetVisualizeDOF(false);
-  ShowFlags.SetVisualizeHDR(false);
-  ShowFlags.SetVisualizeLightCulling(false);
-  ShowFlags.SetVisualizeLPV(false);
-  ShowFlags.SetVisualizeMeshDistanceFields(false);
-  ShowFlags.SetVisualizeMotionBlur(false);
-  ShowFlags.SetVisualizeOutOfBoundsPixels(false);
-  ShowFlags.SetVisualizeSenses(false);
-  ShowFlags.SetVisualizeShadingModels(false);
-  ShowFlags.SetVisualizeSSR(false);
-  ShowFlags.SetVisualizeSSS(false);
-  // ShowFlags.SetVolumeLightingSamples(false);
-  // ShowFlags.SetVolumes(false);
-  // ShowFlags.SetWidgetComponents(false);
-  // ShowFlags.SetWireframe(false);
 }
 
 void ADepthLidar::PutRenderTarget(const FRenderTargetPtr &TextureTarget) const{
@@ -437,18 +345,23 @@ void ADepthLidar::PutRenderTarget(const FRenderTargetPtr &TextureTarget) const{
 }
 
 // Implemention of the RenderTargetPool
-FRenderTargetPtr FRenderTargetPool::Get()
+FRenderTargetPtr FRenderTargetPool::Get(const FIntPoint& Size)
 {
   FRenderTargetPtr Got = nullptr;
 
+  static int get_cnt=0;
+  get_cnt++;
+  UE_LOG(LogTemp, Log, TEXT("debug cnt: %d"), get_cnt);
+
   // Try to get one from the pool
-  Lock.lock();
-  if (!Avialables.empty())
   {
-    Got = Avialables.top();
-    Avialables.pop();
+    FScopeLock ScopeLock(&CS);
+    if (!Avialables.empty())
+    {
+      Got = Avialables.top();
+      Avialables.pop();
+    }
   }
-  Lock.unlock();
 
   // Pool is empty, create a new one
   if (Got==nullptr && Total.size()<10)
@@ -469,15 +382,21 @@ FRenderTargetPtr FRenderTargetPool::Get()
     Got->InitCustomFormat(Size.X, Size.Y, PF_B8G8R8A8, true);
   }
 
+  if(Got!=nullptr){
+    Got->ResizeTarget(Size.X, Size.Y); // This function will do nothing if the size do not change
+  }
 
   return Got;
 }
 
 void FRenderTargetPool::Put(const FRenderTargetPtr &RenderTarget)
 {
-  Lock.lock();
+  static int put_cnt = 0;
+  put_cnt++;
+  UE_LOG(LogTemp, Log, TEXT("debug cnt: %d"), put_cnt);
+
+  FScopeLock ScopeLock(&CS);
   Avialables.push(RenderTarget);
-  Lock.unlock();
 }
 
 FRenderTargetPool::~FRenderTargetPool(){

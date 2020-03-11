@@ -43,6 +43,7 @@ class CARLA_API ADepthLidar : public ASensor
     float CaptureCenterOrientation = 0.0f;
     float RayStartOrientation = 0.0f;
     int RayNumber = 0;
+    bool Empty = true;
   };
   void SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> Stream) const;
 
@@ -57,15 +58,20 @@ class CARLA_API ADepthLidar : public ASensor
   private:
   void CalcResolutionAndCaptureFov();
 
-  void CalcProjection();
+  void SetProjectionMatrix();
 
-  void CalcTextureSize();
+  int SetHFov(float ScanFov);
 
-  void RemoveOtherPostProcessingEffect(FEngineShowFlags &ShowFlags);
+  void SetTextureSize();
 
-  // Capture every 18deg in horizon, with Fov 20deg
-  const float HFov = carla::geom::Math::ToRadians(74.0f);
-  const float HStep = carla::geom::Math::ToRadians(72.0f);
+  // The max allowed capture fov, default to be 90 degree
+  const float MaxHStep = carla::geom::Math::ToRadians(90.0);
+
+  // Capture fov in horizon
+  float HStep;
+
+  // Store the horizontal fov of the capture in rad.
+  float HFov;
 
   // Store the vertical fov of the capture in rad.
   float VFov;
@@ -114,20 +120,20 @@ class CARLA_API ADepthLidar : public ASensor
 /**
  * Manage a pool of avialable TextureRenderTarget
  */
-class FRenderTargetPool{
-  public:
-  FRenderTargetPool(const FIntPoint& Size):Size(Size){
-    Lock.unlock();
+class FRenderTargetPool
+{
+public:
+  FRenderTargetPool()
+  {
   }
-  
+
   ~FRenderTargetPool();
 
-  FRenderTargetPtr Get();
-  void Put(const FRenderTargetPtr& RenderTarget);
+  FRenderTargetPtr Get(const FIntPoint &Size);
+  void Put(const FRenderTargetPtr &RenderTarget);
 
-  private:
-  FIntPoint Size;
-  std::mutex Lock;
+private:
+  FCriticalSection CS;
   std::stack<FRenderTargetPtr> Avialables;
   std::stack<FRenderTargetPtr> Total;
 };

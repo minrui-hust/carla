@@ -230,6 +230,7 @@ void export_sensor_data() {
 
   class_<csd::LidarMeasurement, bases<cs::SensorData>, boost::noncopyable, boost::shared_ptr<csd::LidarMeasurement>>("LidarMeasurement", no_init)
     .add_property("horizontal_angle", &csd::LidarMeasurement::GetHorizontalAngle)
+    .add_property("horizontal_end_angle", &csd::LidarMeasurement::GetHorizontalEndAngle)
     .add_property("channels", &csd::LidarMeasurement::GetChannelCount)
     .add_property("raw_data", &GetRawDataAsBuffer<csd::LidarMeasurement>)
     .def("get_point_count", &csd::LidarMeasurement::GetPointCount, (arg("channel")))

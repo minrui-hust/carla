@@ -31,6 +31,10 @@ namespace s11n {
       return reinterpret_cast<const float &>(_begin[Index::HorizontalAngle]);
     }
 
+    float GetHorizontalEndAngle() const {
+      return reinterpret_cast<const float &>(_begin[Index::HorizontalEndAngle]);
+    }
+
     uint32_t GetChannelCount() const {
       return _begin[Index::ChannelCount];
     }
