@@ -67,9 +67,9 @@ void ADepthLidar::BeginPlay()
 
   // Deactivate auto capture, capture manully
   CaptureComponent2D->Deactivate();
-  CaptureComponent2D->bAutoActivate = false;
-  CaptureComponent2D->bCaptureEveryFrame = false;
-  CaptureComponent2D->bCaptureOnMovement = false;
+  //CaptureComponent2D->bAutoActivate = false;
+  //CaptureComponent2D->bCaptureEveryFrame = false;
+  //CaptureComponent2D->bCaptureOnMovement = false;
 
   // Set the post depth material
   CaptureComponent2D->PostProcessSettings.AddBlendable(UMaterialInstanceDynamic::Create(DepthMaterial, this), 1.0);
