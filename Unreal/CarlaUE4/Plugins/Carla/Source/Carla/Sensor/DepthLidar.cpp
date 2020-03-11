@@ -138,10 +138,6 @@ void ADepthLidar::Tick(float DeltaTime)
     // Process the rendered target on rendering thread
     ENQUEUE_RENDER_COMMAND(FDepthLidar_WaitForCaptureDone)
     ([Sensor = this, CaptureInfo, TextureTarget, Stream = GetDataStream(*this)](FRHICommandListImmediate &InRHICmdList) mutable {
-      // Debug
-      Sensor->PutRenderTarget(TextureTarget);
-      return;
-      
       auto StreamPtr = std::make_shared<decltype(Stream)>(std::move(Stream));
       auto RenderResource = static_cast<const FTextureRenderTarget2DResource *>(TextureTarget->Resource);
       InRHICmdList.ReadSurfaceDataAsync(
