@@ -83,6 +83,10 @@ namespace s11n {
       return _header[Index::ChannelCount];
     }
 
+    uint32_t GetSize() const {
+      return _points.size();
+    }
+
     void Reset(uint32_t total_point_count) {
       std::memset(_header.data() + Index::SIZE, 0, sizeof(uint32_t) * GetChannelCount());
       _points.clear();
