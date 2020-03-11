@@ -78,13 +78,11 @@ void ADepthLidar::BeginPlay()
   CaptureComponent2D->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 
   // Calculate parameters
-  CalcResolutionAndCaptureFov();
-  SetProjectionMatrix();
-  SetTextureSize();
+  ApplyConfig();
 
   // Create the rendering pool and
   // set the texture size of the rendering pool generated
-  RenderTargetPool = MakeUnique<FRenderTargetPool>();
+  RenderTargetPool = MakeUnique<FTexturePool>();
   check(RenderTargetPool.IsValid());
 
   // Start from zero
@@ -101,10 +99,7 @@ void ADepthLidar::Tick(float DeltaTime)
   float ScanFov = RotationRate * DeltaTime;
 
   // We should use how many capture to cover this scan
-  int CaptureNum = SetHFov(ScanFov);
-
-  // Update the texture size
-  SetTextureSize();
+  int CaptureNum = SetScanFov(ScanFov);
 
   // [LastOrientation, CurrentOrientation) is going to be processed,
   // each time HStep at most
@@ -117,10 +112,10 @@ void ADepthLidar::Tick(float DeltaTime)
     float CaptureStartOrientation = LastOrientation + i * HStep;
     float CaptureEndOrientation = LastOrientation + (i + 1) * HStep;
 
+    float RayStartOrientation = std::ceil(CaptureStartOrientation/HReso) * HReso;
+
     // Ray end orientation of this capture
-    int N = static_cast<int>((CaptureEndOrientation-RayStartOrientation)/HReso);
-    if( std::fmod(CaptureEndOrientation-RayStartOrientation, HReso) > 0 ) ++N;
-    RayEndOrientation = RayStartOrientation + N*HReso;
+    int N = std::floor((CaptureEndOrientation-RayStartOrientation)/HReso) + 1;
 
     // Set the Capture orientation
     float CaptureCenterOrientation = (CaptureStartOrientation+CaptureEndOrientation)/2.0;
@@ -131,6 +126,10 @@ void ADepthLidar::Tick(float DeltaTime)
     CaptureInfo.CaptureCenterOrientation = CaptureCenterOrientation;
     CaptureInfo.RayStartOrientation = RayStartOrientation;
     CaptureInfo.RayNumber = N;
+    CaptureInfo.Width = TextureSize.X;
+    CaptureInfo.Height = TextureSize.Y;
+    CaptureInfo.HFov = HFov;
+    CaptureInfo.VFov = VFov;
     CaptureInfo.Empty = false;
 
     // Get a texture target from texture target pool
@@ -159,7 +158,7 @@ void ADepthLidar::Tick(float DeltaTime)
               Sensor->SendPixelsOnOtherThread(std::move(Pixels), CaptureInfo, StreamPtr);
             });
       });
-    }else{
+    } else{
       // Send dummy one
       CaptureInfo.Empty = true;
       auto StreamPtr = std::make_shared<FAsyncDataStream>(GetDataStream(*this));
@@ -167,8 +166,6 @@ void ADepthLidar::Tick(float DeltaTime)
       SendPixelsOnOtherThread(DummyPixels, CaptureInfo, StreamPtr);
     }
 
-    // Update for next capture
-    std::swap(RayStartOrientation, RayEndOrientation);
   }
 
   // Update LastOrientation for next tick, wrap in [0~2*PI)
@@ -183,6 +180,11 @@ void ADepthLidar::SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo Ca
     carla::sensor::s11n::LidarMeasurement LidarMeasurementWrap(Description.Channels);
 
     float RayStartOrientation = Wrap2PI(CaptureInfo.RayStartOrientation);
+
+    int Width = CaptureInfo.Width;
+    int Height = CaptureInfo.Height;
+    float HFov = CaptureInfo.HFov;
+    float VFov = CaptureInfo.VFov;
 
     if (!CaptureInfo.Empty)
     {
@@ -199,11 +201,11 @@ void ADepthLidar::SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo Ca
           RayPitch = Elevations[Channel];
 
           // Calc the image coordinates from orientation
-          int U = static_cast<int>((std::tan(RayYaw) / std::tan(HFov / 2.0) + 1.0) * (0.5 * static_cast<float>(TextureSize.X)));
-          int V = static_cast<int>((1.0 - std::tan(RayPitch) / std::tan(VFov / 2.0) / std::cos(RayYaw)) * (0.5 * static_cast<float>(TextureSize.Y)));
+          int U = static_cast<int>((std::tan(RayYaw) / std::tan(HFov / 2.0) + 1.0) * (0.5 * static_cast<float>(Width)));
+          int V = static_cast<int>((1.0 - std::tan(RayPitch) / std::tan(VFov / 2.0) / std::cos(RayYaw)) * (0.5 * static_cast<float>(Height)));
 
           // Get the depth
-          const auto &Color = Pixels[V * TextureSize.X + U];
+          const auto &Color = Pixels[V * Width + U];
           float Depth = (Color.R + Color.G * 256.0f + Color.B * 256.0f * 256.0f) / static_cast<float>(256 * 256 * 256 - 1) * MaxDepth;
 
           // Get point coordinate in Capture frame
@@ -232,9 +234,7 @@ void ADepthLidar::SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo Ca
     float RayMidOrientation = RayEndOrientation;
     if (RayEndOrientation < RayStartOrientation)
     {
-      int N = static_cast<int>((carla::geom::Math::Pi2<float>() - RayStartOrientation) / HReso);
-      if (RayStartOrientation + N * HReso < carla::geom::Math::Pi2<float>())
-        ++N;
+      int N = std::floor((carla::geom::Math::Pi2<float>() - RayStartOrientation) / HReso) + 1;
       RayMidOrientation = Wrap2PI(RayStartOrientation + N * HReso);
     }
 
@@ -249,6 +249,7 @@ void ADepthLidar::SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo Ca
       LidarMeasurementWrap.SetHorizontalAngle(RayMidOrientation);
       LidarMeasurementWrap.SetHorizontalEndAngle(RayEndOrientation);
       StreamPtr->Send(*this, LidarMeasurementWrap, StreamPtr->PopBufferFromPool());
+      UE_LOG(LogTemp, Log, TEXT("Wrap happen: %d"), LidarMeasurementWrap.GetSize());
     }
 }
 
@@ -259,7 +260,7 @@ void ADepthLidar::EndPlay(const EEndPlayReason::Type EndPlayReason)
 }
 
 // Calculate the Fov of the capture based on lidar configuration
-void ADepthLidar::CalcResolutionAndCaptureFov()
+void ADepthLidar::ApplyConfig()
 {
   // Calculate verticle angular resolution and elevations
   Elevations.SetNum(Description.Channels);
@@ -286,20 +287,10 @@ void ADepthLidar::CalcResolutionAndCaptureFov()
   }
   
   // Original lidar verticle fov, enlarged by 2 degrees
-  float lidar_vfov = carla::geom::Math::ToRadians(std::max(std::abs(Description.UpperFovLimit), std::abs(Description.LowerFovLimit))*2 + 2.0);
-
-  // Enlarge the verticle fov cause the edge of image has smaller verticle fov
-  VFov = 2.0 * atan( tan(lidar_vfov / 2.0) / cos(HFov / 2.0) );
-
-  // set the HFov to the default one, may change later
-  HFov = MaxHStep + carla::geom::Math::ToRadians(2.0);
+  LidarVFov = carla::geom::Math::ToRadians(std::max(std::abs(Description.UpperFovLimit), std::abs(Description.LowerFovLimit))*2 + 2.0);
 
   // rotation rate in rad/s
   RotationRate = Description.RotationFrequency * carla::geom::Math::Pi2<float>();
-
-  // Horizon lidar resolution in rad
-  HReso = RotationRate / Description.PointsPerSecond;
-  VReso = HReso; // force verticle reso to be same
 }
 
 // Calculate the camera projection matrix
@@ -318,7 +309,7 @@ void ADepthLidar::SetProjectionMatrix()
   }
 }
 
-int ADepthLidar::SetHFov(float ScanFov)
+int ADepthLidar::SetScanFov(float ScanFov)
 {
   int N=1;
   while(MaxHStep < ScanFov/N) ++N;
@@ -326,15 +317,22 @@ int ADepthLidar::SetHFov(float ScanFov)
   HStep = ScanFov/N;
   HFov = HStep + carla::geom::Math::ToRadians(2.0);
 
-  return N;
-}
+  // Enlarge the verticle fov cause the edge of image has smaller verticle fov
+  VFov = 2.0 * atan(tan(LidarVFov/ 2.0) / cos(HFov / 2.0));
 
-void ADepthLidar::SetTextureSize()
-{
-  // Upsample 4 times to mitigate aliasing
-  TextureSize.X = 2 *  static_cast<int>(HFov / HReso);
+  // Horizon lidar resolution in rad
+  HReso = RotationRate / Description.PointsPerSecond;
+  VReso = HReso; // force verticle reso to be same
+
+  // Set the texture size, 2 time upsample
+  TextureSize.X = 2 * static_cast<int>(HFov / HReso);
   TextureSize.Y = 2 *  static_cast<int>(VFov / VReso);
   UE_LOG(LogTemp, Log, TEXT("Texture Size: %d, %d"), TextureSize.X, TextureSize.Y);
+
+  // set the projection matrix based on Fov
+  SetProjectionMatrix();
+
+  return N;
 }
 
 void ADepthLidar::PutRenderTarget(const FRenderTargetPtr &TextureTarget) const{
@@ -345,21 +343,19 @@ void ADepthLidar::PutRenderTarget(const FRenderTargetPtr &TextureTarget) const{
 }
 
 // Implemention of the RenderTargetPool
-FRenderTargetPtr FRenderTargetPool::Get(const FIntPoint& Size)
+FRenderTargetPtr FTexturePool::Get(const FIntPoint& Size)
 {
   FRenderTargetPtr Got = nullptr;
 
-  static int get_cnt=0;
-  get_cnt++;
-  UE_LOG(LogTemp, Log, TEXT("debug cnt: %d"), get_cnt);
-
-  // Try to get one from the pool
+  int AvialableSize = 0;
   {
+    // Try to get one from the pool
     FScopeLock ScopeLock(&CS);
     if (!Avialables.empty())
     {
       Got = Avialables.top();
       Avialables.pop();
+      AvialableSize = Avialables.size();
     }
   }
 
@@ -371,7 +367,6 @@ FRenderTargetPtr FRenderTargetPool::Get(const FIntPoint& Size)
     Got->AddToRoot();
     Total.push(Got);
 
-    UE_LOG(LogTemp, Log, TEXT("Total RenderTargets: %d"), Total.size());
 
     Got->CompressionSettings = TextureCompressionSettings::TC_Default;
     Got->SRGB = false;
@@ -386,20 +381,18 @@ FRenderTargetPtr FRenderTargetPool::Get(const FIntPoint& Size)
     Got->ResizeTarget(Size.X, Size.Y); // This function will do nothing if the size do not change
   }
 
+  UE_LOG(LogTemp, Log, TEXT("Texture Used: %d"), Total.size() - AvialableSize);
+
   return Got;
 }
 
-void FRenderTargetPool::Put(const FRenderTargetPtr &RenderTarget)
+void FTexturePool::Put(const FRenderTargetPtr &RenderTarget)
 {
-  static int put_cnt = 0;
-  put_cnt++;
-  UE_LOG(LogTemp, Log, TEXT("debug cnt: %d"), put_cnt);
-
   FScopeLock ScopeLock(&CS);
   Avialables.push(RenderTarget);
 }
 
-FRenderTargetPool::~FRenderTargetPool(){
+FTexturePool::~FTexturePool(){
   while(!Total.empty()){
     Total.top()->ReleaseResource();
     Total.top()->RemoveFromRoot();

@@ -16,7 +16,7 @@
 
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
-class FRenderTargetPool;
+class FTexturePool;
 
 using  FRenderTargetPtr = UTextureRenderTarget2D*;
 
@@ -43,6 +43,10 @@ class CARLA_API ADepthLidar : public ASensor
     float CaptureCenterOrientation = 0.0f;
     float RayStartOrientation = 0.0f;
     int RayNumber = 0;
+    int Width = 0;
+    int Height = 0;
+    float HFov = 0.0;
+    float VFov = 0.0;
     bool Empty = true;
   };
   void SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> Stream) const;
@@ -56,13 +60,11 @@ class CARLA_API ADepthLidar : public ASensor
 
 
   private:
-  void CalcResolutionAndCaptureFov();
+  void ApplyConfig();
 
   void SetProjectionMatrix();
 
-  int SetHFov(float ScanFov);
-
-  void SetTextureSize();
+  int SetScanFov(float ScanFov);
 
   // The max allowed capture fov, default to be 90 degree
   const float MaxHStep = carla::geom::Math::ToRadians(90.0);
@@ -81,6 +83,9 @@ class CARLA_API ADepthLidar : public ASensor
 
   // Verticle angular resolution in rad.
   float VReso;
+
+  // Lidar veticle fov in rad
+  float LidarVFov;
 
   // Verticle elevation angle of laser ray.
   TArray<float> Elevations;
@@ -114,20 +119,16 @@ class CARLA_API ADepthLidar : public ASensor
 
   // Rendering target pool for CaptureComponent to output
   // Declare it to be mutable, so can be changed even in const member function
-  mutable TUniquePtr<FRenderTargetPool> RenderTargetPool = nullptr;
+  mutable TUniquePtr<FTexturePool> RenderTargetPool = nullptr;
 };
 
 /**
  * Manage a pool of avialable TextureRenderTarget
  */
-class FRenderTargetPool
+class FTexturePool
 {
 public:
-  FRenderTargetPool()
-  {
-  }
-
-  ~FRenderTargetPool();
+  ~FTexturePool();
 
   FRenderTargetPtr Get(const FIntPoint &Size);
   void Put(const FRenderTargetPtr &RenderTarget);
