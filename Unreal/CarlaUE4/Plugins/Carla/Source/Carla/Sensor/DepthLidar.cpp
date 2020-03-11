@@ -138,6 +138,10 @@ void ADepthLidar::Tick(float DeltaTime)
     // Process the rendered target on rendering thread
     ENQUEUE_RENDER_COMMAND(FDepthLidar_WaitForCaptureDone)
     ([Sensor = this, CaptureInfo, TextureTarget, Stream = GetDataStream(*this)](FRHICommandListImmediate &InRHICmdList) mutable {
+      // Debug
+      Sensor->PutRenderTarget(TextureTarget);
+      return;
+      
       auto StreamPtr = std::make_shared<decltype(Stream)>(std::move(Stream));
       auto RenderResource = static_cast<const FTextureRenderTarget2DResource *>(TextureTarget->Resource);
       InRHICmdList.ReadSurfaceDataAsync(
@@ -276,8 +280,8 @@ void ADepthLidar::CalcProjection()
 void ADepthLidar::CalcTextureSize()
 {
   // Upsample 4 times to mitigate aliasing
-  TextureSize.X = 4 *  static_cast<int>(HFov / HReso);
-  TextureSize.Y = 4 *  static_cast<int>(VFov / VReso);
+  TextureSize.X = 2 *  static_cast<int>(HFov / HReso);
+  TextureSize.Y = 2 *  static_cast<int>(VFov / VReso);
   UE_LOG(LogTemp, Log, TEXT("Texture Size: %d, %d"), TextureSize.X, TextureSize.Y);
 }
 
