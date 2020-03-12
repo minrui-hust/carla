@@ -49,11 +49,15 @@ void ARayCastLidar::CreateLasers()
   const float DeltaAngle = NumberOfLasers == 1u ? 0.f :
     (Description.UpperFovLimit - Description.LowerFovLimit) /
     static_cast<float>(NumberOfLasers - 1);
+
+  bool UserElevation = NumberOfLasers == Description.VerticleAngles.Num();
+
   LaserAngles.Empty(NumberOfLasers);
   for(auto i = 0u; i < NumberOfLasers; ++i)
   {
-    const float VerticalAngle =
-        Description.UpperFovLimit - static_cast<float>(i) * DeltaAngle;
+    const float VerticalAngle =  UserElevation
+                                 ?Description.VerticleAngles[i]
+                                 :Description.UpperFovLimit - static_cast<float>(i) * DeltaAngle;
     LaserAngles.Emplace(VerticalAngle);
   }
 }
@@ -73,7 +77,7 @@ void ARayCastLidar::ReadPoints(const float DeltaTime)
   const uint32 ChannelCount = Description.Channels;
   const uint32 PointsToScanWithOneLaser =
     FMath::RoundHalfFromZero(
-        Description.PointsPerSecond * DeltaTime / float(ChannelCount));
+        Description.PointsPerSecond * DeltaTime);
 
   if (PointsToScanWithOneLaser <= 0)
   {

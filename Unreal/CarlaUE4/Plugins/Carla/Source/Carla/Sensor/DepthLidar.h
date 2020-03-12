@@ -40,16 +40,17 @@ class CARLA_API ADepthLidar : public ASensor
 
   struct FCaptureInfo
   {
-    float CaptureCenterOrientation = 0.0f;
-    float RayStartOrientation = 0.0f;
-    int RayNumber = 0;
+    float CaptureStartOrientation = 0.0f;
+    float CaptureEndOrientation = 0.0f;
+    int RayStartID = 0; // Included
+    int RayEndID = 0; // Excluded
     int Width = 0;
     int Height = 0;
     float HFov = 0.0;
     float VFov = 0.0;
     bool Empty = true;
   };
-  void SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> Stream) const;
+  void SendPixels(TArray<FColor>&& Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> Stream) const;
 
   protected:
   virtual void BeginPlay() override;
@@ -99,11 +100,6 @@ class CARLA_API ADepthLidar : public ASensor
   // Orientation of the lidar, erea between LastOrientation and CurrentOrientation
   // is going to be captured on this tick
   float LastOrientation = 0.0f;
-  float CurrentOrientation = 0.0f;
-
-  // The laser ray going to be processed in one capture
-  float RayStartOrientation = 0.0f;
-  float RayEndOrientation = 0.0f;
 
   float MaxDepth = 0.0f;
 

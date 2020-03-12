@@ -13,8 +13,6 @@
 #include "ConstructorHelpers.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
-#include <chrono>
-
 float Wrap2PI(float in){
   return in > carla::geom::Math::Pi2<float>()?
          in - carla::geom::Math::Pi2<float>() * static_cast<int>(in/carla::geom::Math::Pi2<float>()):
@@ -67,9 +65,7 @@ void ADepthLidar::BeginPlay()
 
   // Deactivate auto capture, capture manully
   CaptureComponent2D->Deactivate();
-  //CaptureComponent2D->bAutoActivate = false;
-  //CaptureComponent2D->bCaptureEveryFrame = false;
-  //CaptureComponent2D->bCaptureOnMovement = false;
+  CaptureComponent2D->bAutoActivate = false;
 
   // Set the post depth material
   CaptureComponent2D->PostProcessSettings.AddBlendable(UMaterialInstanceDynamic::Create(DepthMaterial, this), 1.0);
@@ -87,7 +83,6 @@ void ADepthLidar::BeginPlay()
 
   // Start from zero
   LastOrientation = 0.0f;
-  RayStartOrientation = 0.0f;
 }
 
 void ADepthLidar::Tick(float DeltaTime)
@@ -101,31 +96,26 @@ void ADepthLidar::Tick(float DeltaTime)
   // We should use how many capture to cover this scan
   int CaptureNum = SetScanFov(ScanFov);
 
-  // [LastOrientation, CurrentOrientation) is going to be processed,
-  // each time HStep at most
-  CurrentOrientation = LastOrientation + ScanFov;
-
   // Process all the CaptureNum captures
   for (int i = 0; i < CaptureNum; ++i)
   {
-    // Capture orientation
+    //[CaptureStartOrientation, CaptureEndOrientation) is going to be processed by this capture
     float CaptureStartOrientation = LastOrientation + i * HStep;
     float CaptureEndOrientation = LastOrientation + (i + 1) * HStep;
 
-    float RayStartOrientation = std::ceil(CaptureStartOrientation/HReso) * HReso;
-
-    // Ray end orientation of this capture
-    int N = std::floor((CaptureEndOrientation-RayStartOrientation)/HReso) + 1;
+    //[RayStartID, RayEndId) is covered by this capture
+    int RayStartID = std::ceil(CaptureStartOrientation/HReso);
+    int RayEndID = std::floor(CaptureEndOrientation/HReso) + 1;
 
     // Set the Capture orientation
-    float CaptureCenterOrientation = (CaptureStartOrientation+CaptureEndOrientation)/2.0;
-    CaptureComponent2D->SetRelativeRotation(FQuat(FVector(0,0,1), CaptureCenterOrientation));
+    CaptureComponent2D->SetRelativeRotation(FQuat(FVector(0, 0, 1), (CaptureStartOrientation + CaptureEndOrientation) / 2.0));
 
     // Construct a CaptureInfo of this capture
     FCaptureInfo CaptureInfo;
-    CaptureInfo.CaptureCenterOrientation = CaptureCenterOrientation;
-    CaptureInfo.RayStartOrientation = RayStartOrientation;
-    CaptureInfo.RayNumber = N;
+    CaptureInfo.CaptureStartOrientation = CaptureStartOrientation;
+    CaptureInfo.CaptureEndOrientation = CaptureEndOrientation;
+    CaptureInfo.RayStartID = RayStartID;
+    CaptureInfo.RayEndID = RayEndID;
     CaptureInfo.Width = TextureSize.X;
     CaptureInfo.Height = TextureSize.Y;
     CaptureInfo.HFov = HFov;
@@ -135,7 +125,7 @@ void ADepthLidar::Tick(float DeltaTime)
     // Get a texture target from texture target pool
     auto TextureTarget = RenderTargetPool->Get(TextureSize);
 
-    // Process only if there is available texture, otherwise skip this scan
+    // Process only if there is available texture, otherwise send a dummy one
     if (TextureTarget) {
       // Bind texture target to capture component
       CaptureComponent2D->TextureTarget = TextureTarget;
@@ -153,104 +143,64 @@ void ADepthLidar::Tick(float DeltaTime)
             FIntRect(0, 0, RenderResource->GetSizeXY().X, RenderResource->GetSizeXY().Y),
             FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX),
             [Sensor, CaptureInfo, TextureTarget, StreamPtr](TArray<FColor> &&Pixels) mutable {
-              check(TextureTarget);
-              Sensor->PutRenderTarget(TextureTarget); // Return the texture
-              Sensor->SendPixelsOnOtherThread(std::move(Pixels), CaptureInfo, StreamPtr);
+              Sensor->PutRenderTarget(TextureTarget);
+              Sensor->SendPixels(std::move(Pixels), CaptureInfo, StreamPtr);
             });
       });
     } else{
-      // Send dummy one
-      CaptureInfo.Empty = true;
-      auto StreamPtr = std::make_shared<FAsyncDataStream>(GetDataStream(*this));
-      auto DummyPixels = TArray<FColor>{};
-      SendPixelsOnOtherThread(DummyPixels, CaptureInfo, StreamPtr);
+      CaptureInfo.Empty = true; // Set Empty to true to send a dummy one
+      SendPixels(TArray<FColor>{}, CaptureInfo, std::make_shared<FAsyncDataStream>(GetDataStream(*this)));
     }
-
   }
 
   // Update LastOrientation for next tick, wrap in [0~2*PI)
-  LastOrientation = Wrap2PI(CurrentOrientation);
-  RayStartOrientation = Wrap2PI(RayStartOrientation);
+  LastOrientation = Wrap2PI(LastOrientation + ScanFov);
 }
 
-void ADepthLidar::SendPixelsOnOtherThread(TArray<FColor> Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> StreamPtr) const
+void ADepthLidar::SendPixels(TArray<FColor>&& Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> StreamPtr) const
 {
     // Make a new LidarMeasurement
     carla::sensor::s11n::LidarMeasurement LidarMeasurement(Description.Channels);
-    carla::sensor::s11n::LidarMeasurement LidarMeasurementWrap(Description.Channels);
 
-    float RayStartOrientation = Wrap2PI(CaptureInfo.RayStartOrientation);
-
-    int Width = CaptureInfo.Width;
-    int Height = CaptureInfo.Height;
-    float HFov = CaptureInfo.HFov;
-    float VFov = CaptureInfo.VFov;
-
-    if (!CaptureInfo.Empty)
-    {
+    // Set the capture center orientation
+    float CaptureCenterOrientation = (CaptureInfo.CaptureStartOrientation + CaptureInfo.CaptureEndOrientation)/2.0;
+    
+    if (!CaptureInfo.Empty) {
       float RayOrientation, RayPitch, RayYaw;
-      for (int Channel = 0; Channel < Description.Channels; ++Channel)
-      {
-        for (int Ray = 0; Ray < CaptureInfo.RayNumber; ++Ray)
-        {
+      for (int Channel = 0; Channel < Description.Channels; ++Channel) {
+        for (int Ray = CaptureInfo.RayStartID; Ray < CaptureInfo.RayEndID; ++Ray) {
           // Current ray horizontal orientation
-          RayOrientation = CaptureInfo.RayStartOrientation + Ray * HReso;
+          RayOrientation = Ray * HReso;
 
           // Current ray yaw relative to capture center
-          RayYaw = RayOrientation - CaptureInfo.CaptureCenterOrientation;
-          RayPitch = Elevations[Channel];
+          RayYaw = RayOrientation - CaptureCenterOrientation;
+          RayPitch = -Elevations[Channel]; // Elevations up horizon is positive, which is opposite to left-hand coordinate
 
           // Calc the image coordinates from orientation
-          int U = static_cast<int>((std::tan(RayYaw) / std::tan(HFov / 2.0) + 1.0) * (0.5 * static_cast<float>(Width)));
-          int V = static_cast<int>((1.0 - std::tan(RayPitch) / std::tan(VFov / 2.0) / std::cos(RayYaw)) * (0.5 * static_cast<float>(Height)));
+          int U = static_cast<int>((std::tan(RayYaw) / std::tan(CaptureInfo.HFov / 2.0) + 1.0) * 0.5 * CaptureInfo.Width);
+          int V = static_cast<int>((1.0 + std::tan(RayPitch) / std::tan(CaptureInfo.VFov / 2.0) / std::cos(RayYaw)) * 0.5 * CaptureInfo.Height);
 
-          // Get the depth
-          const auto &Color = Pixels[V * Width + U];
+          // Todo make some interpolation
+          const auto &Color = Pixels[V * CaptureInfo.Width + U];
           float Depth = (Color.R + Color.G * 256.0f + Color.B * 256.0f * 256.0f) / static_cast<float>(256 * 256 * 256 - 1) * MaxDepth;
 
-          // Get point coordinate in Capture frame
+          // Get point coordinate in sensor frame
           carla::rpc::Location Point;
-          Point.x = cos(RayOrientation) * Depth / cos(RayYaw);
-          Point.y = sin(RayOrientation) * Depth / cos(RayYaw);
-          Point.z = -std::tan(RayPitch) * Depth / cos(RayYaw);
+          Point.x = cos(RayOrientation - PI/2.0) * Depth / cos(RayYaw);
+          Point.y = sin(RayOrientation - PI/2.0) * Depth / cos(RayYaw);
+          Point.z = tan(RayPitch)                * Depth / cos(RayYaw);
 
-          if (Point.Length() < Description.Range)
-          {
-            if (RayOrientation > RayStartOrientation)
-            {
-              LidarMeasurement.WritePoint(Channel, Point);
-            }
-            else
-            {
-              LidarMeasurementWrap.WritePoint(Channel, Point);
-            }
+          if (Point.Length() < Description.Range) {
+            LidarMeasurement.WritePoint(Channel, Point);
           }
         }
       }
     }
 
-    // Check wether wrap happens
-    float RayEndOrientation = Wrap2PI(CaptureInfo.RayStartOrientation + CaptureInfo.RayNumber * HReso);
-    float RayMidOrientation = RayEndOrientation;
-    if (RayEndOrientation < RayStartOrientation)
-    {
-      int N = std::floor((carla::geom::Math::Pi2<float>() - RayStartOrientation) / HReso) + 1;
-      RayMidOrientation = Wrap2PI(RayStartOrientation + N * HReso);
-    }
-
-    // Send the normal one
-    LidarMeasurement.SetHorizontalAngle(RayStartOrientation);
-    LidarMeasurement.SetHorizontalEndAngle(RayMidOrientation);
+    // Send the LidarMeasurement
+    LidarMeasurement.SetHorizontalAngle(CaptureInfo.CaptureStartOrientation);
+    LidarMeasurement.SetHorizontalEndAngle(CaptureInfo.CaptureEndOrientation);
     StreamPtr->Send(*this, LidarMeasurement, StreamPtr->PopBufferFromPool());
-
-    // Send the wrap one
-    if (RayMidOrientation < RayEndOrientation)
-    {
-      LidarMeasurementWrap.SetHorizontalAngle(RayMidOrientation);
-      LidarMeasurementWrap.SetHorizontalEndAngle(RayEndOrientation);
-      StreamPtr->Send(*this, LidarMeasurementWrap, StreamPtr->PopBufferFromPool());
-      UE_LOG(LogTemp, Log, TEXT("Wrap happen: %d"), LidarMeasurementWrap.GetSize());
-    }
 }
 
 void ADepthLidar::EndPlay(const EEndPlayReason::Type EndPlayReason)
