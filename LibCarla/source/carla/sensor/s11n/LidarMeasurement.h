@@ -83,7 +83,7 @@ namespace s11n {
       return _header[Index::ChannelCount];
     }
 
-    uint32_t GetSize() const {
+    size_t GetSize() const {
       return _points.size();
     }
 
