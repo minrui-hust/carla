@@ -23,7 +23,7 @@ namespace s11n {
   ///    {
   ///      Horizontal angle (float),
   ///      Horizontal end angle (float),
-  ///      Timestamp (ms),
+  ///      Scan (scan id)
   ///      Channel count,
   ///      Point count of channel 0,
   ///      ...
@@ -50,6 +50,7 @@ namespace s11n {
     enum Index : size_t {
       HorizontalAngle,
       HorizontalEndAngle,
+      Scan,
       ChannelCount,
       SIZE
     };
@@ -77,6 +78,14 @@ namespace s11n {
 
     void SetHorizontalEndAngle(float angle) {
       std::memcpy(&_header[Index::HorizontalEndAngle], &angle, sizeof(uint32_t));
+    }
+
+    uint32_t GetScan() const {
+      return _header[Index::Scan];
+    }
+
+    void SetScan(uint32_t Scan) {
+      _header[Index::Scan] = Scan;
     }
 
     uint32_t GetChannelCount() const {

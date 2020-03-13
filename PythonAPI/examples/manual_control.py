@@ -1051,8 +1051,8 @@ def main():
     argparser.add_argument(
         '--res',
         metavar='WIDTHxHEIGHT',
-        default='1280x720',
-        help='window resolution (default: 1280x720)')
+        default='800x600',
+        help='window resolution (default: 800x600)')
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',

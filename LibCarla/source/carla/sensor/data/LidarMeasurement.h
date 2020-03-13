@@ -48,6 +48,10 @@ namespace data {
       return GetHeader().GetHorizontalEndAngle();
     }
 
+    auto GetScan() const {
+      return GetHeader().GetScan();
+    }
+
     /// Number of channels of the Lidar.
     auto GetChannelCount() const {
       return GetHeader().GetChannelCount();

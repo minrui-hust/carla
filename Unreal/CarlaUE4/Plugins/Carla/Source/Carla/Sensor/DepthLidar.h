@@ -48,6 +48,7 @@ class CARLA_API ADepthLidar : public ASensor
     int Height = 0;
     float HFov = 0.0;
     float VFov = 0.0;
+    uint32_t Scan = 0;
     bool Empty = true;
   };
   void SendPixels(TArray<FColor>&& Pixels, FCaptureInfo CaptureInfo, std::shared_ptr<FAsyncDataStream> Stream) const;
@@ -100,6 +101,8 @@ class CARLA_API ADepthLidar : public ASensor
   // Orientation of the lidar, erea between LastOrientation and CurrentOrientation
   // is going to be captured on this tick
   float LastOrientation = 0.0f;
+
+  uint32_t Scan = 0; // Always increase
 
   float MaxDepth = 0.0f;
 

@@ -83,18 +83,21 @@ void ADepthLidar::BeginPlay()
 
   // Start from zero
   LastOrientation = 0.0f;
+  Scan = 0;
 }
 
 void ADepthLidar::Tick(float DeltaTime)
 {
   Super::Tick(DeltaTime);
-  //UE_LOG(LogTemp, Log, TEXT("Delta: %f"), DeltaTime);
+  UE_LOG(LogTemp, Log, TEXT("DeltaTime: %f"), DeltaTime);
 
   // Total scan fov this tick
   float ScanFov = RotationRate * DeltaTime;
+  UE_LOG(LogTemp, Log, TEXT("ScanFov: %f"), ScanFov);
 
   // We should use how many capture to cover this scan
   int CaptureNum = SetScanFov(ScanFov);
+  UE_LOG(LogTemp, Log, TEXT("Capture Number: %d"), CaptureNum);
 
   // Process all the CaptureNum captures
   for (int i = 0; i < CaptureNum; ++i)
@@ -120,6 +123,7 @@ void ADepthLidar::Tick(float DeltaTime)
     CaptureInfo.Height = TextureSize.Y;
     CaptureInfo.HFov = HFov;
     CaptureInfo.VFov = VFov;
+    CaptureInfo.Scan = Scan;
     CaptureInfo.Empty = false;
 
     // Get a texture target from texture target pool
@@ -151,6 +155,8 @@ void ADepthLidar::Tick(float DeltaTime)
       CaptureInfo.Empty = true; // Set Empty to true to send a dummy one
       SendPixels(TArray<FColor>{}, CaptureInfo, std::make_shared<FAsyncDataStream>(GetDataStream(*this)));
     }
+
+    ++Scan; // Scan always increase
   }
 
   // Update LastOrientation for next tick, wrap in [0~2*PI)
@@ -200,6 +206,7 @@ void ADepthLidar::SendPixels(TArray<FColor>&& Pixels, FCaptureInfo CaptureInfo, 
     // Send the LidarMeasurement
     LidarMeasurement.SetHorizontalAngle(CaptureInfo.CaptureStartOrientation);
     LidarMeasurement.SetHorizontalEndAngle(CaptureInfo.CaptureEndOrientation);
+    LidarMeasurement.SetScan(CaptureInfo.Scan);
     StreamPtr->Send(*this, LidarMeasurement, StreamPtr->PopBufferFromPool());
 }
 
@@ -241,6 +248,10 @@ void ADepthLidar::ApplyConfig()
 
   // rotation rate in rad/s
   RotationRate = Description.RotationFrequency * carla::geom::Math::Pi2<float>();
+
+  // Horizon lidar resolution in rad
+  HReso = RotationRate / Description.PointsPerSecond;
+  VReso = HReso; // force verticle reso to be same
 }
 
 // Calculate the camera projection matrix
@@ -262,17 +273,14 @@ void ADepthLidar::SetProjectionMatrix()
 int ADepthLidar::SetScanFov(float ScanFov)
 {
   int N=1;
-  while(MaxHStep < ScanFov/N) ++N;
+  while(MaxHStep*N < ScanFov - HReso ) ++N;
 
   HStep = ScanFov/N;
   HFov = HStep + carla::geom::Math::ToRadians(2.0);
+  UE_LOG(LogTemp, Log, TEXT("HStep: %f"), HStep);
 
   // Enlarge the verticle fov cause the edge of image has smaller verticle fov
   VFov = 2.0 * atan(tan(LidarVFov/ 2.0) / cos(HFov / 2.0));
-
-  // Horizon lidar resolution in rad
-  HReso = RotationRate / Description.PointsPerSecond;
-  VReso = HReso; // force verticle reso to be same
 
   // Set the texture size, 2 time upsample
   TextureSize.X = 2 * static_cast<int>(HFov / HReso);
