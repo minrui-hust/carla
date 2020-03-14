@@ -38,7 +38,7 @@ ADepthLidar::ADepthLidar(const FObjectInitializer &ObjectInitializer) : Super(Ob
   // Load the depth post process material
   ConstructorHelpers::FObjectFinder<UMaterial> Loader(
     #if PLATFORM_LINUX
-      TEXT("Material'/Carla/PostProcessingMaterials/DepthEffectMaterial_GLSL.DepthEffectMaterial_GLSL'")
+      TEXT("Material'/Carla/PostProcessingMaterials/SegmentationDepthEffectMaterial.SegmentationDepthEffectMaterial'")
     #else
       TEXT("Material'/Carla/PostProcessingMaterials/DepthEffectMaterial.DepthEffectMaterial'")
     #endif
@@ -89,7 +89,7 @@ void ADepthLidar::BeginPlay()
 void ADepthLidar::Tick(float DeltaTime)
 {
   Super::Tick(DeltaTime);
-  UE_LOG(LogTemp, Log, TEXT("DeltaTime: %f"), DeltaTime);
+  //UE_LOG(LogTemp, Log, TEXT("DeltaTime: %f"), DeltaTime);
 
   // Total scan fov this tick
   float ScanFov = RotationRate * DeltaTime;
@@ -189,6 +189,7 @@ void ADepthLidar::SendPixels(TArray<FColor>&& Pixels, FCaptureInfo CaptureInfo, 
           // Todo make some interpolation
           const auto &Color = Pixels[V * CaptureInfo.Width + U];
           float Depth = (Color.R + Color.G * 256.0f + Color.B * 256.0f * 256.0f) / static_cast<float>(256 * 256 * 256 - 1) * MaxDepth;
+          //UE_LOG(LogTemp, Log, TEXT("Alpha: %d"), Color.A);
 
           // Get point coordinate in sensor frame
           carla::rpc::Location Point;
@@ -202,6 +203,10 @@ void ADepthLidar::SendPixels(TArray<FColor>&& Pixels, FCaptureInfo CaptureInfo, 
         }
       }
     }
+
+    // Debug
+    auto Color = Pixels[0];
+    UE_LOG(LogTemp, Log, TEXT("%d,%d,%d,%d"), Color.A, Color.R, Color.G, Color.B);
 
     // Send the LidarMeasurement
     LidarMeasurement.SetHorizontalAngle(CaptureInfo.CaptureStartOrientation);

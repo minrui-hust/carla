@@ -55,5 +55,7 @@ private:
 
   TArray<float> LaserAngles;
 
+  uint32_t Scan;
+
   FLidarMeasurement LidarMeasurement;
 };

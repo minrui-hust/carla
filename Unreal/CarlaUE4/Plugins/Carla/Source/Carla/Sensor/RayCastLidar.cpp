@@ -25,6 +25,7 @@ ARayCastLidar::ARayCastLidar(const FObjectInitializer& ObjectInitializer)
   : Super(ObjectInitializer)
 {
   PrimaryActorTick.bCanEverTick = true;
+  Scan = 0;
 }
 
 void ARayCastLidar::Set(const FActorDescription &ActorDescription)
@@ -91,8 +92,8 @@ void ARayCastLidar::ReadPoints(const float DeltaTime)
 
   check(ChannelCount == LaserAngles.Num());
 
-  const float CurrentHorizontalAngle = carla::geom::Math::ToDegrees(
-      LidarMeasurement.GetHorizontalAngle());
+  const float CurrentHorizontalAngle = std::fmod(carla::geom::Math::ToDegrees(
+      LidarMeasurement.GetHorizontalEndAngle()), 360.0f);
   const float AngleDistanceOfTick = Description.RotationFrequency * 360.0f * DeltaTime;
   const float AngleDistanceOfLaserMeasure = AngleDistanceOfTick / PointsToScanWithOneLaser;
 
@@ -111,9 +112,9 @@ void ARayCastLidar::ReadPoints(const float DeltaTime)
     }
   }
 
-  const float HorizontalAngle = carla::geom::Math::ToRadians(
-      std::fmod(CurrentHorizontalAngle + AngleDistanceOfTick, 360.0f));
-  LidarMeasurement.SetHorizontalAngle(HorizontalAngle);
+  LidarMeasurement.SetHorizontalAngle(carla::geom::Math::ToRadians(CurrentHorizontalAngle));
+  LidarMeasurement.SetHorizontalEndAngle(carla::geom::Math::ToRadians(CurrentHorizontalAngle + AngleDistanceOfTick));
+  LidarMeasurement.SetScan(Scan++);
 }
 
 bool ARayCastLidar::ShootLaser(const uint32 Channel, const float HorizontalAngle, FVector &XYZ) const
