@@ -19,14 +19,11 @@
 #include "carla/road/element/RoadInfoMarkRecord.h"
 #include "carla/road/element/RoadInfoMarkTypeLine.h"
 #include "carla/road/element/RoadInfoSpeed.h"
+#include "carla/road/element/RoadInfoSignal.h"
 #include "carla/road/element/RoadInfoVisitor.h"
-#include "carla/road/element/RoadObjectCrosswalk.h"
-#include "carla/road/element/RoadObjectVisitor.h"
+#include "carla/road/element/RoadInfoCrosswalk.h"
 #include "carla/road/InformationSet.h"
-#include "carla/road/general/Validity.h"
-#include "carla/road/signal/Signal.h"
-#include "carla/road/signal/SignalReference.h"
-#include "carla/road/signal/SignalDependency.h"
+#include "carla/road/Signal.h"
 
 #include <iterator>
 #include <memory>
@@ -45,19 +42,18 @@ namespace road {
       info.first->_info = InformationSet(std::move(info.second));
     }
 
-    for (auto &&info : _temp_road_object_container) {
-      DEBUG_ASSERT(info.first != nullptr);
-      info.first->_objects = ObjectSet(std::move(info.second));
-    }
-
     for (auto &&info : _temp_lane_info_container) {
       DEBUG_ASSERT(info.first != nullptr);
       info.first->_info = InformationSet(std::move(info.second));
     }
 
+    // compute transform requires the roads to have the RoadInfo
+    SolveSignalReferencesAndTransforms();
+
+    SolveControllerAndJuntionReferences();
+
     // remove temporal already used information
     _temp_road_info_container.clear();
-    _temp_road_object_container.clear();
     _temp_lane_info_container.clear();
 
     // _map_data is a memeber of MapBuilder so you must especify if
@@ -65,6 +61,7 @@ namespace road {
     // or move it (will return move -> Map(Map &&))
     Map map(std::move(_map_data));
     CreateJunctionBoundingBoxes(map);
+
 
     return map;
   }
@@ -96,8 +93,8 @@ namespace road {
       const double length,
       const std::vector<road::element::CrosswalkPoint> points) {
     DEBUG_ASSERT(road != nullptr);
-    auto cross = std::make_unique<RoadObjectCrosswalk>(s, name, t, zOffset, hdg, pitch, roll, std::move(orientation), width, length, std::move(points));
-    _temp_road_object_container[road].emplace_back(std::move(cross));
+    auto cross = std::make_unique<RoadInfoCrosswalk>(s, name, t, zOffset, hdg, pitch, roll, std::move(orientation), width, length, std::move(points));
+    _temp_road_info_container[road].emplace_back(std::move(cross));
   }
 
   // called from lane parser
@@ -233,66 +230,105 @@ namespace road {
     _temp_lane_info_container[lane].emplace_back(std::make_unique<RoadInfoSpeed>(s, max));
   }
 
-  void MapBuilder::AddSignal(
-      const uint32_t road_id,
-      const uint32_t signal_id,
-      const double s,
-      const double t,
-      const std::string name,
-      const std::string dynamic,
-      const std::string orientation,
-      const double zOffset,
-      const std::string country,
-      const std::string type,
-      const std::string subtype,
-      const double value,
-      const std::string unit,
-      const double height,
-      const double width,
-      const std::string text,
-      const double hOffset,
-      const double pitch,
-      const double roll) {
-    auto signals = _map_data.GetRoad(road_id).getSignals();
-    DEBUG_ASSERT(signals != nullptr);
-    signals->emplace(signal_id,
-        signal::Signal(road_id, signal_id, s, t, name, dynamic,
-        orientation, zOffset, country, type, subtype, value, unit, height, width,
-        text, hOffset, pitch, roll));
-  }
 
-  void MapBuilder::AddValidityToLastAddedSignal(
-      const uint32_t road_id,
-      const uint32_t signal_id,
-      const int32_t from_lane,
-      const int32_t to_lane) {
-    _map_data.GetRoad(road_id).GetSignal(signal_id)->AddValidity(general::Validity(signal_id, from_lane,
-        to_lane));
-  }
+    element::RoadInfoSignal* MapBuilder::AddSignal(
+        Road* road,
+        const SignId signal_id,
+        const double s,
+        const double t,
+        const std::string name,
+        const std::string dynamic,
+        const std::string orientation,
+        const double zOffset,
+        const std::string country,
+        const std::string type,
+        const std::string subtype,
+        const double value,
+        const std::string unit,
+        const double height,
+        const double width,
+        const std::string text,
+        const double hOffset,
+        const double pitch,
+        const double roll) {
+      _temp_signal_container[signal_id] = std::make_unique<Signal>(
+          road->GetId(),
+          signal_id,
+          s,
+          t,
+          name,
+          dynamic,
+          orientation,
+          zOffset,
+          country,
+          type,
+          subtype,
+          value,
+          unit,
+          height,
+          width,
+          text,
+          hOffset,
+          pitch,
+          roll);
 
-  // build road objects
-  carla::road::Road *MapBuilder::AddRoad(
-      const RoadId road_id,
-      const std::string name,
-      const double length,
-      const JuncId junction_id,
-      const RoadId predecessor,
-      const RoadId successor) {
+      return AddSignalReference(road, signal_id, s, t, orientation);
+    }
 
-    // add it
-    auto road = &(_map_data._roads.emplace(road_id, Road()).first->second);
+    element::RoadInfoSignal* MapBuilder::AddSignalReference(
+        Road* road,
+        const SignId signal_id,
+        const double s_position,
+        const double t_position,
+        const std::string signal_reference_orientation) {
 
-    // set road data
-    road->_map_data = &_map_data;
-    road->_id = road_id;
-    road->_name = name;
-    road->_length = length;
-    road->_junction_id = junction_id;
-    (junction_id != -1) ? road->_is_junction = true : road->_is_junction = false;
-    road->_successor = successor;
-    road->_predecessor = predecessor;
+      _temp_road_info_container[road].emplace_back(std::make_unique<element::RoadInfoSignal>(
+          signal_id, s_position, t_position, signal_reference_orientation));
+      auto road_info_signal = static_cast<element::RoadInfoSignal*>(
+          _temp_road_info_container[road].back().get());
+      _temp_signal_reference_container.emplace_back(road_info_signal);
+      return road_info_signal;
+    }
 
-    return road;
+    void MapBuilder::AddValidityToSignalReference(
+        element::RoadInfoSignal* signal_reference,
+        const LaneId from_lane,
+        const LaneId to_lane) {
+      signal_reference->_validities.emplace_back(LaneValidity(from_lane, to_lane));
+    }
+
+    void MapBuilder::AddDependencyToSignal(
+        const SignId signal_id,
+        const std::string dependency_id,
+        const std::string dependency_type) {
+      _temp_signal_container[signal_id]->_dependencies.emplace_back(
+          SignalDependency(dependency_id, dependency_type));
+    }
+
+    // build road objects
+    carla::road::Road *MapBuilder::AddRoad(
+        const RoadId road_id,
+        const std::string name,
+        const double length,
+        const JuncId junction_id,
+        const RoadId predecessor,
+        const RoadId successor)
+    {
+
+      // add it
+      auto road = &(_map_data._roads.emplace(road_id, Road()).first->second);
+
+      // set road data
+      road->_map_data = &_map_data;
+      road->_id = road_id;
+      road->_name = name;
+      road->_length = length;
+      road->_junction_id = junction_id;
+      (junction_id != -1) ? road->_is_junction = true : road->_is_junction = false;
+      road->_successor = successor;
+      road->_predecessor = predecessor;
+
+      return road;
   }
 
   carla::road::LaneSection *MapBuilder::AddRoadSection(
@@ -390,7 +426,7 @@ namespace road {
   }
 
   void MapBuilder::AddRoadGeometrySpiral(
-      carla::road::Road * road,
+      Road * road,
       const double s,
       const double x,
       const double y,
@@ -414,7 +450,7 @@ namespace road {
   }
 
   void MapBuilder::AddRoadGeometryPoly3(
-      carla::road::Road * road,
+      Road * road,
       const double s,
       const double x,
       const double y,
@@ -441,7 +477,7 @@ namespace road {
   }
 
   void MapBuilder::AddRoadGeometryParamPoly3(
-      carla::road::Road * road,
+      Road * road,
       const double s,
       const double x,
       const double y,
@@ -506,49 +542,11 @@ namespace road {
     _map_data.GetJunction(junction_id)->GetConnection(connection_id)->AddLaneLink(from, to);
   }
 
-  void MapBuilder::AddValidityToSignal(
-      const uint32_t road_id,
-      const uint32_t signal_id,
-      const int32_t from_lane,
-      const int32_t to_lane) {
-    DEBUG_ASSERT(_map_data.GetRoad(road_id).GetSignal(signal_id) != nullptr);
-    _map_data.GetRoad(road_id).GetSignal(signal_id)->AddValidity(general::Validity(signal_id, from_lane,
-        to_lane));
-  }
-
-  void MapBuilder::AddValidityToSignalReference(
-      const uint32_t road_id,
-      const uint32_t signal_reference_id,
-      const int32_t from_lane,
-      const int32_t to_lane) {
-    DEBUG_ASSERT(_map_data.GetRoad(road_id).GetSignalRef(signal_reference_id) != nullptr);
-    _map_data.GetRoad(road_id).GetSignalRef(signal_reference_id)->AddValidity(general::Validity(
-        signal_reference_id, from_lane, to_lane));
-  }
-
-  void MapBuilder::AddSignalReference(
-      const uint32_t road_id,
-      const uint32_t signal_reference_id,
-      const double s_position,
-      const double t_position,
-      const std::string signal_reference_orientation) {
-    DEBUG_ASSERT(_map_data.GetRoad(road_id).getSignalReferences() != nullptr);
-    _map_data.GetRoad(road_id).getSignalReferences()->emplace(signal_reference_id,
-        signal::SignalReference(road_id, signal_reference_id, s_position, t_position,
-        signal_reference_orientation));
-  }
-
-  void MapBuilder::AddDependencyToSignal(
-      const RoadId road_id,
-      const SignId signal_id,
-      const uint32_t dependency_id,
-      const std::string dependency_type) {
-    DEBUG_ASSERT(_map_data.GetRoad(road_id).GetSignal(signal_id) != nullptr);
-    _map_data.GetRoad(road_id).GetSignal(signal_id)->AddDependency(signal::SignalDependency(
-        road_id,
-        signal_id,
-        dependency_id,
-        dependency_type));
+  void MapBuilder::AddJunctionController(
+      const JuncId junction_id,
+      std::set<road::ContId>&& controllers) {
+    DEBUG_ASSERT(_map_data.GetJunction(junction_id) != nullptr);
+    _map_data.GetJunction(junction_id)->_controllers = std::move(controllers);
   }
 
   Lane *MapBuilder::GetLane(
@@ -743,6 +741,42 @@ namespace road {
     }
   }
 
+  void MapBuilder::SolveSignalReferencesAndTransforms() {
+    for(auto signal_reference : _temp_signal_reference_container){
+      signal_reference->_signal =
+          _temp_signal_container[signal_reference->_signal_id].get();
+    }
+
+    for(auto& signal_pair : _temp_signal_container){
+      auto& signal = signal_pair.second;
+      DirectedPoint point = GetRoad(signal->_road_id)->GetDirectedPointIn(signal->_s);
+      point.ApplyLateralOffset(static_cast<float>(-signal->_t));
+      point.location.y *= -1; // Unreal Y axis hack
+      point.location.z += static_cast<float>(signal->_zOffset);
+      geom::Transform transform(point.location, geom::Rotation(
+          geom::Math::ToDegrees(static_cast<float>(signal->_pitch)),
+          geom::Math::ToDegrees(static_cast<float>(-(point.tangent + signal->_hOffset))),
+          geom::Math::ToDegrees(static_cast<float>(signal->_roll))));
+      signal->_transform = transform;
+    }
+
+    _map_data._signals = std::move(_temp_signal_container);
+  }
+
+  void MapBuilder::SolveControllerAndJuntionReferences() {
+    for(const auto& junction : _map_data._junctions) {
+      for(const auto& controller : junction.second._controllers) {
+        auto it = _map_data._controllers.find(controller);
+        DEBUG_ASSERT(it != _map_data._controllers.end());
+        it->second->_junctions.insert(junction.first);
+        for(const auto & signal : it->second->_signals) {
+          auto signal_it = _map_data._signals.find(signal);
+          signal_it->second->_controllers.insert(controller);
+        }
+      }
+    }
+  }
+
   void MapBuilder::CreateJunctionBoundingBoxes(Map &map) {
     for (auto &junctionpair : map._data.GetJunctions()) {
       auto* junction = map.GetJunction(junctionpair.first);
@@ -807,6 +841,35 @@ namespace road {
       junction->_bounding_box = carla::geom::BoundingBox(location, extent);
     }
   }
+
+void MapBuilder::CreateController(
+  const ContId controller_id,
+  const std::string controller_name,
+  const uint32_t controller_sequence,
+  const std::set<road::SignId>&& signals) {
+
+    // Add the Controller to MapData
+    auto controller_pair = _map_data._controllers.emplace(
+      std::make_pair(
+          controller_id,
+          std::make_unique<Controller>(controller_id, controller_name, controller_sequence)));
+
+    DEBUG_ASSERT(controller_pair.first != _map_data._controllers.end());
+    DEBUG_ASSERT(controller_pair.first->second);
+
+    // Add the signals owned by the controller
+    controller_pair.first->second->_signals = std::move(signals);
+
+    // Add ContId to the signal owned by this Controller
+    auto& signals_map = _map_data._signals;
+    for(auto signal: signals) {
+      auto it = signals_map.find(signal);
+      if(it != signals_map.end()) {
+        it->second->_controllers.insert(signal);
+      }
+    }
+}
+
 
 } // namespace road
 } // namespace carla
