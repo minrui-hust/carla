@@ -956,7 +956,7 @@ class CameraManager(object):
             return
         if self.sensors[self.index][0].startswith('sensor.lidar'):
             points = np.frombuffer(image.raw_data, dtype=np.dtype('f4'))
-            points = np.reshape(points, (int(points.shape[0] / 3), 3))
+            points = np.reshape(points, (int(points.shape[0] / 4), 4))
             lidar_data = np.array(points[:, :2])
             lidar_data *= min(self.hud.dim) / 100.0
             lidar_data += (0.5 * self.hud.dim[0], 0.5 * self.hud.dim[1])
@@ -1051,8 +1051,8 @@ def main():
     argparser.add_argument(
         '--res',
         metavar='WIDTHxHEIGHT',
-        default='800x600',
-        help='window resolution (default: 800x600)')
+        default='1280x720',
+        help='window resolution (default: 1280x720)')
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',

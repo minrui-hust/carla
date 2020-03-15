@@ -33,9 +33,9 @@ namespace s11n {
   /// The points are stored in an array of floats
   ///
   ///    {
-  ///      X0, Y0, Z0,
+  ///      X0, Y0, Z0, I0
   ///      ...
-  ///      Xn, Yn, Zn,
+  ///      Xn, Yn, Zn, In
   ///    }
   ///
   /// @warning WritePoint should be called sequentially in the order in which
@@ -102,12 +102,13 @@ namespace s11n {
       _points.reserve(3u * total_point_count);
     }
 
-    void WritePoint(uint32_t channel, rpc::Location point) {
+    void WritePoint(uint32_t channel, rpc::Location point, uint32_t id = 0) {
       DEBUG_ASSERT(GetChannelCount() > channel);
       _header[Index::SIZE + channel] += 1u;
       _points.emplace_back(point.x);
       _points.emplace_back(point.y);
       _points.emplace_back(point.z);
+      _points.emplace_back(id * 10.0 + 1);
     }
 
   private:

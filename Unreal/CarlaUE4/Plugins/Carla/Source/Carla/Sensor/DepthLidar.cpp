@@ -188,7 +188,7 @@ void ADepthLidar::SendPixels(TArray<FColor>&& Pixels, FCaptureInfo CaptureInfo, 
 
           // Todo make some interpolation
           const auto &Color = Pixels[V * CaptureInfo.Width + U];
-          float Depth = (Color.R + Color.G * 256.0f + Color.B * 256.0f * 256.0f) / static_cast<float>(256 * 256 * 256 - 1) * MaxDepth;
+          float Depth = (Color.R + Color.G * 256.0f) / static_cast<float>(256 * 256 - 1) * MaxDepth;
           //UE_LOG(LogTemp, Log, TEXT("Alpha: %d"), Color.A);
 
           // Get point coordinate in sensor frame
@@ -198,15 +198,11 @@ void ADepthLidar::SendPixels(TArray<FColor>&& Pixels, FCaptureInfo CaptureInfo, 
           Point.z = tan(RayPitch)                * Depth / cos(RayYaw);
 
           if (Point.Length() < Description.Range) {
-            LidarMeasurement.WritePoint(Channel, Point);
+            LidarMeasurement.WritePoint(Channel, Point, Color.B);
           }
         }
       }
     }
-
-    // Debug
-    auto Color = Pixels[0];
-    UE_LOG(LogTemp, Log, TEXT("%d,%d,%d,%d"), Color.A, Color.R, Color.G, Color.B);
 
     // Send the LidarMeasurement
     LidarMeasurement.SetHorizontalAngle(CaptureInfo.CaptureStartOrientation);
