@@ -53,13 +53,13 @@ namespace detail {
       return _attributes;
     }
 
-  protected:
-
-    explicit ActorState(rpc::Actor description, EpisodeProxy episode);
-
     const geom::BoundingBox &GetBoundingBox() const {
       return _description.bounding_box;
     }
+
+  protected:
+
+    explicit ActorState(rpc::Actor description, EpisodeProxy episode);
 
     const rpc::Actor &GetActorDescription() const {
       return _description;
