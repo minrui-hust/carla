@@ -93,11 +93,11 @@ void ADepthLidar::Tick(float DeltaTime)
 
   // Total scan fov this tick
   float ScanFov = RotationRate * DeltaTime;
-  UE_LOG(LogTemp, Log, TEXT("ScanFov: %f"), ScanFov);
+  //UE_LOG(LogTemp, Log, TEXT("ScanFov: %f"), ScanFov);
 
   // We should use how many capture to cover this scan
   int CaptureNum = SetScanFov(ScanFov);
-  UE_LOG(LogTemp, Log, TEXT("Capture Number: %d"), CaptureNum);
+  //UE_LOG(LogTemp, Log, TEXT("Capture Number: %d"), CaptureNum);
 
   // Process all the CaptureNum captures
   for (int i = 0; i < CaptureNum; ++i)
@@ -278,7 +278,7 @@ int ADepthLidar::SetScanFov(float ScanFov)
 
   HStep = ScanFov/N;
   HFov = HStep + carla::geom::Math::ToRadians(2.0);
-  UE_LOG(LogTemp, Log, TEXT("HStep: %f"), HStep);
+  //UE_LOG(LogTemp, Log, TEXT("HStep: %f"), HStep);
 
   // Enlarge the verticle fov cause the edge of image has smaller verticle fov
   VFov = 2.0 * atan(tan(LidarVFov/ 2.0) / cos(HFov / 2.0));
@@ -286,7 +286,7 @@ int ADepthLidar::SetScanFov(float ScanFov)
   // Set the texture size, 2 time upsample
   TextureSize.X = 2 * static_cast<int>(HFov / HReso);
   TextureSize.Y = 2 *  static_cast<int>(VFov / VReso);
-  UE_LOG(LogTemp, Log, TEXT("Texture Size: %d, %d"), TextureSize.X, TextureSize.Y);
+  //UE_LOG(LogTemp, Log, TEXT("Texture Size: %d, %d"), TextureSize.X, TextureSize.Y);
 
   // set the projection matrix based on Fov
   SetProjectionMatrix();

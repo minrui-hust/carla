@@ -62,8 +62,11 @@ TPair<EActorSpawnResultStatus, FActorView> UActorDispatcher::SpawnActor(
 
   auto View = Result.IsValid() ? RegisterActor(*Result.Actor, std::move(Description), DesiredId) : FActorView();
 
-  if (!View.IsValid())
-  {
+  // Tag the actor with the actor id, this may override the tag in onActorSpawned delegate
+  const auto actor_id = Registry.Find(Result.Actor).GetActorId();
+  ATagger::TagActor(*Result.Actor, static_cast<ECityObjectLabel>(actor_id), true);
+
+  if (!View.IsValid()) {
     UE_LOG(LogCarla, Warning, TEXT("Failed to spawn actor '%s'"), *Description.Id);
     check(Result.Status != EActorSpawnResultStatus::Success);
   }

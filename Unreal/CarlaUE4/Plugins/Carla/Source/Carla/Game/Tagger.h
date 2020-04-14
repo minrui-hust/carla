@@ -47,6 +47,8 @@ public:
   /// objects having this value active.
   static void TagActor(const AActor &Actor, bool bTagForSemanticSegmentation);
 
+  static void TagActor(const AActor &Actor, const ECityObjectLabel label, bool bTagForSemanticSegmentation);
+
   /// Set the tag of every actor in level.
   ///
   /// If bTagForSemanticSegmentation true, activate the custom depth pass. This

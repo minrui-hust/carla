@@ -90,6 +90,23 @@ void ATagger::TagActor(const AActor &Actor, bool bTagForSemanticSegmentation)
   }
 }
 
+
+void ATagger::TagActor(const AActor &Actor, const ECityObjectLabel label, bool bTagForSemanticSegmentation ){
+  // Iterate static meshes.
+  TArray<UStaticMeshComponent *> StaticMeshComponents;
+  Actor.GetComponents<UStaticMeshComponent>(StaticMeshComponents);
+  for (UStaticMeshComponent *Component : StaticMeshComponents) {
+    SetStencilValue(*Component, label, bTagForSemanticSegmentation);
+  }
+
+  // Iterate skeletal meshes.
+  TArray<USkeletalMeshComponent *> SkeletalMeshComponents;
+  Actor.GetComponents<USkeletalMeshComponent>(SkeletalMeshComponents);
+  for (USkeletalMeshComponent *Component : SkeletalMeshComponents) {
+    SetStencilValue(*Component, label, bTagForSemanticSegmentation);
+  }
+}
+
 void ATagger::TagActorsInLevel(UWorld &World, bool bTagForSemanticSegmentation)
 {
   for (TActorIterator<AActor> it(&World); it; ++it) {
